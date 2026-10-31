@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="stylesheet" href="xterm.css">
+<style>
+  html, body { margin: 0; height: 100%; background: #0f1113; overflow: hidden; }
+  #t { position: absolute; inset: 4px 2px 0 6px; }
+</style>
+</head>
+<body>
+<div id="t"></div>
+<script src="xterm.js"></script>
+<script src="addon-fit.js"></script>
+<script>
+  const term = new Terminal({
+    fontFamily: 'monospace',
+    fontSize: 13,
+    cursorBlink: true,
+    scrollback: 5000,
+    allowProposedApi: true,
+    theme: { background: '#0f1113', foreground: '#e6e6e6', cursor: '#8fd3a8', selectionBackground: '#2c4a38' },
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(document.getElementById('t'));
+  fit.fit();
+
+  let ctrl = false;
+  window.armCtrl = (on) => { ctrl = on; };
+  window.setFontSize = (px) => { term.options.fontSize = px; fit.fit(); };
+  window.focusTerm = () => term.focus();
+
+  // Bytes arrive base64-encoded; feeding Uint8Array lets xterm handle UTF-8
+  // sequences split across chunks.
+  window.termWrite = (b64) => {
+    const s = atob(b64);
+    const buf = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) buf[i] = s.charCodeAt(i);
+    term.write(buf);
+  };
+
+  term.onData((d) => {
+    if (ctrl && d.length === 1) {
+      const c = d.toUpperCase().charCodeAt(0);
+      if (c >= 64 && c <= 95) d = String.fromCharCode(c - 64);
+      ctrl = false;
+      Native.ctrlConsumed();
+    }
+    Native.input(d);
+  });
+  term.onBinary((d) => Native.input(d));
+  term.onResize(({ cols, rows }) => Native.resize(cols, rows));
+
+  new ResizeObserver(() => fit.fit()).observe(document.getElementById('t'));
+  Native.ready(term.cols, term.rows);
+</script>
+</body>
+</html>

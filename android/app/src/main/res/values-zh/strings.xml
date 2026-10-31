@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="login_title">加入你的 Tailnet</string>
+    <string name="login_desc">Taildeck 在 App 内运行独立的 Tailscale 节点，不占用系统 VPN，也不影响其他 App 的流量。</string>
+    <string name="device_name">设备名</string>
+    <string name="advanced">高级</string>
+    <string name="control_url">控制服务器</string>
+    <string name="control_url_hint">留空使用 Tailscale 官方。Headscale 填 https://hs.example.com</string>
+    <string name="auth_key">Auth Key（可选）</string>
+    <string name="sign_in">登录</string>
+    <string name="open_login">打开登录页</string>
+    <string name="waiting_login">在浏览器中完成登录后回到这里。</string>
+    <string name="starting">连接中…</string>
+    <string name="retry">重试</string>
+    <string name="cancel">取消</string>
+
+    <string name="tab_nodes">节点</string>
+    <string name="tab_services">服务</string>
+    <string name="settings">设置</string>
+    <string name="search_nodes">搜索节点</string>
+    <string name="this_device">本机</string>
+    <string name="online">在线</string>
+    <string name="offline">离线</string>
+    <string name="last_seen">最后在线 %1$s</string>
+    <string name="no_nodes">当前设备看不到其他节点。</string>
+    <string name="n_online">%1$d / %2$d 在线</string>
+    <string name="copied">已复制</string>
+
+    <string name="node_addresses">地址</string>
+    <string name="node_os">系统</string>
+    <string name="node_owner">所有者</string>
+    <string name="node_tags">标签</string>
+    <string name="node_routes">子网路由</string>
+    <string name="node_connection">连接</string>
+    <string name="node_key_expiry">密钥过期</string>
+    <string name="node_traffic">流量</string>
+    <string name="direct">直连 · %1$s</string>
+    <string name="relay">中继 · %1$s</string>
+    <string name="idle">空闲</string>
+    <string name="exit_node_option">出口节点</string>
+    <string name="ping">Ping</string>
+    <string name="ping_result">%1$.1f ms · %2$s</string>
+    <string name="ping_via_direct">直连</string>
+    <string name="ping_via_derp">DERP %1$s</string>
+    <string name="ssh">SSH</string>
+    <string name="open_web">网页</string>
+
+    <string name="services">服务</string>
+    <string name="no_services">还没有服务。手动添加，或扫描常用端口。</string>
+    <string name="no_services_all">在节点里添加的服务会显示在这里。</string>
+    <string name="add_service">添加服务</string>
+    <string name="edit_service">编辑服务</string>
+    <string name="scan_ports">扫描端口</string>
+    <string name="scanning">扫描中…</string>
+    <string name="scan_none">常用端口都没有开放。</string>
+    <string name="scan_found">开放端口</string>
+    <string name="service_name">名称</string>
+    <string name="service_scheme">协议</string>
+    <string name="service_port">端口</string>
+    <string name="service_path">路径</string>
+    <string name="save">保存</string>
+    <string name="delete">删除</string>
+    <string name="edit">编辑</string>
+
+    <string name="ssh_connect">SSH 连接</string>
+    <string name="ssh_user">用户</string>
+    <string name="ssh_port">端口</string>
+    <string name="ssh_auth_tailscale">Tailscale SSH</string>
+    <string name="ssh_auth_password">密码</string>
+    <string name="ssh_auth_key">App 密钥</string>
+    <string name="ssh_password">密码</string>
+    <string name="ssh_remember">在本设备记住密码</string>
+    <string name="ssh_key_hint">把这个公钥加到节点的 ~/.ssh/authorized_keys：</string>
+    <string name="connect">连接</string>
+    <string name="ssh_connecting">正在连接 %1$s…</string>
+    <string name="ssh_closed">已断开</string>
+    <string name="reconnect">重连</string>
+    <string name="keyboard">键盘</string>
+
+    <string name="web_cert_title">证书不受信任</string>
+    <string name="web_cert_body">%1$s 的证书不受本机信任，自签名服务常见这种情况。仍要继续吗？</string>
+    <string name="web_continue">继续</string>
+    <string name="web_auth_title">登录 %1$s</string>
+    <string name="web_no_proxy">当前 WebView 版本不支持经 Tailscale 转发，请更新 Android System WebView。</string>
+    <string name="web_download_unsupported">暂不支持下载</string>
+    <string name="reload">刷新</string>
+    <string name="back">返回</string>
+
+    <string name="account">账号</string>
+    <string name="tailnet">Tailnet</string>
+    <string name="ssh_key">SSH 密钥</string>
+    <string name="copy">复制</string>
+    <string name="forget_host_keys">清除已信任的主机密钥</string>
+    <string name="host_keys_cleared">已清除主机密钥</string>
+    <string name="logs">日志</string>
+    <string name="logout">退出登录</string>
+    <string name="logout_confirm">退出登录并把本设备从 Tailnet 移除？</string>
+    <string name="version">版本 %1$s</string>
+</resources>
