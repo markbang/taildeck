@@ -1,5 +1,9 @@
 package top.bangwu.taildeck.ui
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -16,10 +20,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Widgets
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -38,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -57,12 +66,16 @@ import top.bangwu.taildeck.TaildeckApp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(onNode: (String) -> Unit, onService: (Service) -> Unit, onSettings: () -> Unit) {
+fun HomeScreen(onNode: (String) -> Unit, onOpenInApp: (Service) -> Unit, onSettings: () -> Unit) {
     val app = TaildeckApp.instance
     val state by app.tailscale.state.collectAsStateWithLifecycle()
     val services by app.store.services.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableStateOf(0) }
     val status = state.status
+    val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
 
     Scaffold(
         topBar = {
@@ -107,7 +120,7 @@ fun HomeScreen(onNode: (String) -> Unit, onService: (Service) -> Unit, onSetting
     ) { padding ->
         when (tab) {
             0 -> NodesTab(padding, status?.self, status?.peers.orEmpty(), state.phase == Phase.RUNNING, services, onNode)
-            else -> ServicesTab(padding, services, status?.peers.orEmpty(), onService)
+            else -> ServicesTab(padding, services, status?.peers.orEmpty(), onOpenInApp)
         }
     }
 }
@@ -210,7 +223,8 @@ private fun NodeRow(node: Node, serviceCount: Int, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ServicesTab(padding: PaddingValues, services: List<Service>, peers: List<Node>, onService: (Service) -> Unit) {
+private fun ServicesTab(padding: PaddingValues, services: List<Service>, peers: List<Node>, onOpenInApp: (Service) -> Unit) {
+    val context = LocalContext.current
     if (services.isEmpty()) {
         Column(Modifier.padding(padding).fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
             Text(stringResource(R.string.no_services_all), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -228,11 +242,26 @@ private fun ServicesTab(padding: PaddingValues, services: List<Service>, peers: 
                 }
             }
             items(list, key = { it.id }) { svc ->
+                var menu by remember { mutableStateOf(false) }
                 ListItem(
                     headlineContent = { Text(svc.name) },
                     supportingContent = { Text(svc.url, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    trailingContent = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, null) },
-                    modifier = Modifier.clickable { onService(svc) },
+                    trailingContent = {
+                        IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
+                        DropdownMenu(menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.open_in_app)) },
+                                leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, null) },
+                                onClick = { menu = false; onOpenInApp(svc) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.copy_link)) },
+                                leadingIcon = { Icon(Icons.Outlined.Link, null) },
+                                onClick = { menu = false; context.copyBrowserLink(svc.url) },
+                            )
+                        }
+                    },
+                    modifier = Modifier.clickable { context.openInBrowser(svc.url) },
                 )
             }
         }

@@ -9,6 +9,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Keyboard
@@ -31,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -54,8 +57,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import top.bangwu.taildeck.R
 import top.bangwu.taildeck.SshAuth
+import top.bangwu.taildeck.SshKeys
 import top.bangwu.taildeck.SshProfile
 import top.bangwu.taildeck.TaildeckApp
 import top.bangwu.taildeck.tsbridge.SSHListener
@@ -73,7 +78,7 @@ private sealed interface Conn {
 
 // Bridges xterm.js in a WebView to a Go SSH session. Output is coalesced per
 // frame because evaluateJavascript per chunk is slow on bulk output.
-private class TerminalController(private val keyPath: String) {
+private class TerminalController(private val keys: SshKeys) {
     var webView: WebView? = null
     var session: SSHSession? = null
     var cols = 80
@@ -126,9 +131,17 @@ private class TerminalController(private val keyPath: String) {
         }
         io.execute {
             try {
-                val key = if (profile.auth == SshAuth.KEY) keyPath else ""
                 val pass = if (profile.auth == SshAuth.PASSWORD) profile.password else ""
-                val s = Tsbridge.dialSSH(host, profile.port.toLong(), profile.user, pass, key, cols.toLong(), rows.toLong(), listener)
+                val key = if (profile.auth == SshAuth.KEY) {
+                    keys.paths(profile.keyId) ?: throw IllegalStateException("SSH key not found; pick another key")
+                } else {
+                    null
+                }
+                val s = Tsbridge.dialSSH(
+                    host, profile.port.toLong(), profile.user, pass,
+                    key?.key.orEmpty(), key?.passphrase.orEmpty(), key?.cert.orEmpty(),
+                    cols.toLong(), rows.toLong(), listener,
+                )
                 main.post {
                     session = s
                     onState(Conn.Connected)
@@ -184,7 +197,7 @@ fun TerminalScreen(node: String, onBack: () -> Unit) {
     val app = TaildeckApp.instance
     val context = LocalContext.current
     val saved = remember { app.store.sshProfile(node) }
-    val controller = remember { TerminalController(app.tailscale.keyPath) }
+    val controller = remember { TerminalController(app.keys) }
     var conn by remember { mutableStateOf<Conn>(Conn.Idle) }
     var profile by remember { mutableStateOf(saved?.takeIf { it.auth != SshAuth.PASSWORD || it.password.isNotEmpty() }) }
     var showDialog by remember { mutableStateOf(profile == null) }
@@ -300,17 +313,17 @@ private fun SshDialog(node: String, initial: SshProfile, onDismiss: () -> Unit, 
     var auth by remember { mutableStateOf(initial.auth) }
     var password by remember { mutableStateOf(initial.password) }
     var rememberPw by remember { mutableStateOf(initial.password.isNotEmpty()) }
-    var publicKey by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(auth) {
-        if (auth == SshAuth.KEY && publicKey == null) publicKey = runCatching { app.tailscale.publicKey() }.getOrNull()
-    }
+    var keyId by remember { mutableStateOf(initial.keyId) }
+    var importing by remember { mutableStateOf(false) }
+    val identities by app.keys.list.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { runCatching { app.keys.ensureBuiltin() } }
     val portNum = port.toIntOrNull()?.takeIf { it in 1..65535 }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.ssh_connect)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(node, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.primary)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(user, { user = it.trim() }, label = { Text(stringResource(R.string.ssh_user)) }, singleLine = true, modifier = Modifier.weight(2f))
@@ -348,16 +361,25 @@ private fun SshDialog(node: String, initial: SshProfile, onDismiss: () -> Unit, 
                         }
                     }
                     SshAuth.KEY -> {
-                        Text(stringResource(R.string.ssh_key_hint), style = MaterialTheme.typography.bodySmall)
-                        publicKey?.let { key ->
-                            Text(
-                                key,
-                                fontFamily = FontFamily.Monospace,
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 3,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            TextButton(onClick = { context.copy(key) }) { Text(stringResource(R.string.copy)) }
+                        Text(stringResource(R.string.ssh_choose_key), style = MaterialTheme.typography.labelLarge)
+                        identities.forEach { id ->
+                            Row(
+                                Modifier.fillMaxWidth().clickable { keyId = id.id },
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                RadioButton(selected = keyId == id.id, onClick = { keyId = id.id })
+                                Column(Modifier.weight(1f)) {
+                                    Text(if (id.builtin) stringResource(R.string.key_builtin) else id.name)
+                                    Text(identitySubtitle(id), style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                        TextButton(onClick = { importing = true }) { Text(stringResource(R.string.import_key)) }
+                        val selected = identities.firstOrNull { it.id == keyId }
+                        if (selected != null && !selected.hasCert) {
+                            Text(stringResource(R.string.ssh_key_hint), style = MaterialTheme.typography.bodySmall)
+                            Text(selected.publicKey, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            TextButton(onClick = { context.copy(selected.publicKey) }) { Text(stringResource(R.string.copy_public_key)) }
                         }
                     }
                     SshAuth.TAILSCALE -> Unit
@@ -366,10 +388,17 @@ private fun SshDialog(node: String, initial: SshProfile, onDismiss: () -> Unit, 
         },
         confirmButton = {
             TextButton(
-                onClick = { onConnect(SshProfile(user, portNum ?: 22, auth, if (auth == SshAuth.PASSWORD) password else ""), rememberPw) },
-                enabled = user.isNotBlank() && portNum != null,
+                onClick = { onConnect(SshProfile(user, portNum ?: 22, auth, if (auth == SshAuth.PASSWORD) password else "", keyId), rememberPw) },
+                enabled = user.isNotBlank() && portNum != null && (auth != SshAuth.KEY || identities.any { it.id == keyId }),
             ) { Text(stringResource(R.string.connect)) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
+
+    if (importing) {
+        KeyImportDialog(onDismiss = { importing = false }) {
+            keyId = it.id
+            importing = false
+        }
+    }
 }

@@ -77,18 +77,12 @@
     <string name="reconnect">重连</string>
     <string name="keyboard">键盘</string>
 
-    <string name="web_cert_title">证书不受信任</string>
-    <string name="web_cert_body">%1$s 的证书不受本机信任，自签名服务常见这种情况。仍要继续吗？</string>
-    <string name="web_continue">继续</string>
     <string name="web_auth_title">登录 %1$s</string>
-    <string name="web_no_proxy">当前 WebView 版本不支持经 Tailscale 转发，请更新 Android System WebView。</string>
-    <string name="web_download_unsupported">暂不支持下载</string>
     <string name="reload">刷新</string>
     <string name="back">返回</string>
 
     <string name="account">账号</string>
     <string name="tailnet">Tailnet</string>
-    <string name="ssh_key">SSH 密钥</string>
     <string name="copy">复制</string>
     <string name="forget_host_keys">清除已信任的主机密钥</string>
     <string name="host_keys_cleared">已清除主机密钥</string>
@@ -96,4 +90,28 @@
     <string name="logout">退出登录</string>
     <string name="logout_confirm">退出登录并把本设备从 Tailnet 移除？</string>
     <string name="version">版本 %1$s</string>
+    <string name="notif_channel">Tailnet 连接</string>
+    <string name="notif_title">已连接 Tailnet</string>
+    <string name="notif_text">浏览器网关 127.0.0.1:%1$d</string>
+    <string name="open_in_app">在 App 内打开</string>
+    <string name="copy_link">复制浏览器链接</string>
+    <string name="no_browser">没有可用的浏览器</string>
+    <string name="ssh_keys">SSH 密钥</string>
+    <string name="import_key">导入密钥</string>
+    <string name="key_name">名称</string>
+    <string name="private_key">私钥</string>
+    <string name="private_key_hint">粘贴 OpenSSH/PEM 私钥，或选择文件</string>
+    <string name="pick_file">选择文件</string>
+    <string name="passphrase">密码短语</string>
+    <string name="certificate">证书（可选）</string>
+    <string name="certificate_hint">id_xxx-cert.pub 的内容</string>
+    <string name="passphrase_required">这个私钥已加密，请输入密码短语。</string>
+    <string name="key_builtin">内置</string>
+    <string name="cert">证书</string>
+    <string name="cert_principals">Principals：%1$s</string>
+    <string name="cert_valid_until">有效期至 %1$s</string>
+    <string name="copy_public_key">复制公钥</string>
+    <string name="delete_key_confirm">删除密钥“%1$s”？</string>
+    <string name="ssh_choose_key">密钥</string>
+    <string name="file_too_large">文件太大</string>
 </resources>

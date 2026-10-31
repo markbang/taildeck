@@ -42,7 +42,7 @@ type engine struct {
 	srv      *tsnet.Server
 	lc       *local.Client
 	cancel   context.CancelFunc
-	proxy    *httpProxy
+	gw       *gateway
 	platform Platform
 	dir      string
 	names    peerNames
@@ -54,8 +54,8 @@ var (
 )
 
 // Start brings up the node. dir must be app-private storage.
-// controlURL and authKey may be empty.
-func Start(dir, hostname, controlURL, authKey string, platform Platform, listener StateListener) error {
+// controlURL and authKey may be empty; gatewayPort 0 picks a free port.
+func Start(dir, hostname, controlURL, authKey string, gatewayPort int, platform Platform, listener StateListener) error {
 	mu.Lock()
 	defer mu.Unlock()
 	if cur != nil {
@@ -104,12 +104,12 @@ func Start(dir, hostname, controlURL, authKey string, platform Platform, listene
 		return fmt.Errorf("local client: %w", err)
 	}
 	e := &engine{srv: srv, lc: lc, platform: platform, dir: dir}
-	proxy, err := startProxy(e)
+	gw, err := startGateway(e, gatewayPort)
 	if err != nil {
 		srv.Close()
-		return fmt.Errorf("start proxy: %w", err)
+		return fmt.Errorf("start gateway: %w", err)
 	}
-	e.proxy = proxy
+	e.gw = gw
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancel = cancel
 	go e.watch(ctx, listener)
@@ -126,7 +126,7 @@ func Stop() {
 		return
 	}
 	e.cancel()
-	e.proxy.close()
+	e.gw.close()
 	e.srv.Close()
 }
 
@@ -154,12 +154,12 @@ func NetworkChanged() {
 	}
 }
 
-func ProxyPort() int {
+func GatewayPort() int {
 	e, err := current()
 	if err != nil {
 		return 0
 	}
-	return e.proxy.port
+	return e.gw.port
 }
 
 func Logs() string {

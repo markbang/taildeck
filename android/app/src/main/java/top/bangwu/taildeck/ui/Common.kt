@@ -2,7 +2,10 @@ package top.bangwu.taildeck.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.text.format.DateUtils
 import android.widget.Toast
@@ -13,8 +16,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.ui.unit.dp
 import top.bangwu.taildeck.R
+import top.bangwu.taildeck.TaildeckApp
 import java.time.OffsetDateTime
 
 @Composable
@@ -58,4 +63,26 @@ fun osLabel(os: String): String = when (os.lowercase()) {
     "freebsd" -> "FreeBSD"
     "" -> "—"
     else -> os
+}
+
+/** Opens a tailnet URL in the default browser through the loopback gateway. */
+fun Context.openInBrowser(tailnetUrl: String) {
+    val url = runCatching { TaildeckApp.instance.tailscale.localUrl(tailnetUrl) }.getOrElse {
+        Toast.makeText(this, it.message, Toast.LENGTH_SHORT).show()
+        return
+    }
+    val uri = Uri.parse(url)
+    try {
+        CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(this, uri)
+    } catch (e: ActivityNotFoundException) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, R.string.no_browser, Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+fun Context.copyBrowserLink(tailnetUrl: String) {
+    runCatching { TaildeckApp.instance.tailscale.localUrl(tailnetUrl) }.onSuccess(::copy)
 }

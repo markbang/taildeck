@@ -7,12 +7,15 @@ class TaildeckApp : Application() {
         private set
     lateinit var tailscale: Tailscale
         private set
+    lateinit var keys: SshKeys
+        private set
 
     override fun onCreate() {
         super.onCreate()
         instance = this
         store = Store(this)
         tailscale = Tailscale(this, store)
+        keys = SshKeys(this, store)
         if (store.configured) tailscale.start()
     }
 

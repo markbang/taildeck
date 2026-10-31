@@ -24,6 +24,17 @@ class Store(context: Context) {
         get() = prefs.getString("controlUrl", "") ?: ""
         set(v) = prefs.edit().putString("controlUrl", v).apply()
 
+    var gatewayPort: Int
+        get() = prefs.getInt("gatewayPort", DEFAULT_GATEWAY_PORT)
+        set(v) = prefs.edit().putInt("gatewayPort", v).apply()
+
+    var identities: List<SshIdentity>
+        get() {
+            val arr = JSONArray(prefs.getString("identities", "[]"))
+            return (0 until arr.length()).mapNotNull { runCatching { SshIdentity.parse(arr.getJSONObject(it)) }.getOrNull() }
+        }
+        set(v) = prefs.edit().putString("identities", JSONArray(v.map { it.toJson() }).toString()).apply()
+
     private val _services = MutableStateFlow(loadServices())
     val services: StateFlow<List<Service>> = _services
 
@@ -52,4 +63,9 @@ class Store(context: Context) {
 
     fun saveSshProfile(node: String, profile: SshProfile) =
         prefs.edit().putString("ssh:$node", profile.toJson().toString()).apply()
+
+    companion object {
+        // Fixed so gateway URLs stay bookmarkable across restarts.
+        const val DEFAULT_GATEWAY_PORT = 18680
+    }
 }

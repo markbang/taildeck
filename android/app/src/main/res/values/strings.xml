@@ -79,18 +79,12 @@
     <string name="reconnect">Reconnect</string>
     <string name="keyboard">Keyboard</string>
 
-    <string name="web_cert_title">Untrusted certificate</string>
-    <string name="web_cert_body">%1$s presented a certificate this device doesn\'t trust. Common for self-signed services. Continue anyway?</string>
-    <string name="web_continue">Continue</string>
     <string name="web_auth_title">Sign in to %1$s</string>
-    <string name="web_no_proxy">This WebView version can\'t route traffic through Tailscale. Update Android System WebView.</string>
-    <string name="web_download_unsupported">Downloads aren\'t supported yet</string>
     <string name="reload">Reload</string>
     <string name="back">Back</string>
 
     <string name="account">Account</string>
     <string name="tailnet">Tailnet</string>
-    <string name="ssh_key">SSH key</string>
     <string name="copy">Copy</string>
     <string name="forget_host_keys">Forget trusted host keys</string>
     <string name="host_keys_cleared">Host keys cleared</string>
@@ -98,4 +92,28 @@
     <string name="logout">Sign out</string>
     <string name="logout_confirm">Sign out and remove this device from the tailnet?</string>
     <string name="version">Version %1$s</string>
+    <string name="notif_channel">Tailnet connection</string>
+    <string name="notif_title">Connected to tailnet</string>
+    <string name="notif_text">Browser gateway on 127.0.0.1:%1$d</string>
+    <string name="open_in_app">Open in app</string>
+    <string name="copy_link">Copy browser link</string>
+    <string name="no_browser">No browser found</string>
+    <string name="ssh_keys">SSH keys</string>
+    <string name="import_key">Import key</string>
+    <string name="key_name">Name</string>
+    <string name="private_key">Private key</string>
+    <string name="private_key_hint">Paste OpenSSH/PEM key, or pick a file</string>
+    <string name="pick_file">Choose file</string>
+    <string name="passphrase">Passphrase</string>
+    <string name="certificate">Certificate (optional)</string>
+    <string name="certificate_hint">Contents of id_xxx-cert.pub</string>
+    <string name="passphrase_required">This key is encrypted. Enter its passphrase.</string>
+    <string name="key_builtin">Built-in</string>
+    <string name="cert">Cert</string>
+    <string name="cert_principals">Principals: %1$s</string>
+    <string name="cert_valid_until">Valid until %1$s</string>
+    <string name="copy_public_key">Copy public key</string>
+    <string name="delete_key_confirm">Delete key \"%1$s\"?</string>
+    <string name="ssh_choose_key">Key</string>
+    <string name="file_too_large">File is too large</string>
 </resources>

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -33,7 +34,8 @@ type SSHSession struct {
 
 // DialSSH opens an interactive PTY shell to host:port over the tailnet.
 // With empty password and keyPath it relies on Tailscale SSH ("none" auth).
-func DialSSH(host string, port int, user, password, keyPath string, cols, rows int, listener SSHListener) (*SSHSession, error) {
+// certPath optionally points to an OpenSSH certificate for the key.
+func DialSSH(host string, port int, user, password, keyPath, passphrase, certPath string, cols, rows int, listener SSHListener) (*SSHSession, error) {
 	e, err := current()
 	if err != nil {
 		return nil, err
@@ -43,11 +45,11 @@ func DialSSH(host string, port int, user, password, keyPath string, cols, rows i
 	}
 	var auths []ssh.AuthMethod
 	if keyPath != "" {
-		signer, err := loadSigner(keyPath)
+		signers, err := loadSigners(keyPath, passphrase, certPath)
 		if err != nil {
 			return nil, err
 		}
-		auths = append(auths, ssh.PublicKeys(signer))
+		auths = append(auths, ssh.PublicKeys(signers...))
 	}
 	if password != "" {
 		auths = append(auths, ssh.Password(password))
@@ -79,7 +81,7 @@ func DialSSH(host string, port int, user, password, keyPath string, cols, rows i
 			listener.OnData([]byte(strings.ReplaceAll(message, "\n", "\r\n")))
 			return nil
 		},
-		Timeout:         20 * time.Second,
+		Timeout: 20 * time.Second,
 	}
 	// Tailscale SSH check mode may block auth until the user approves in a browser.
 	conn.SetDeadline(time.Now().Add(5 * time.Minute))
@@ -222,7 +224,7 @@ func EnsureKey(path, comment string) (string, error) {
 			return "", err
 		}
 	}
-	signer, err := loadSigner(path)
+	signer, err := parseSigner(path, "")
 	if err != nil {
 		return "", err
 	}
@@ -233,14 +235,100 @@ func EnsureKey(path, comment string) (string, error) {
 	return pub, nil
 }
 
-func loadSigner(path string) (ssh.Signer, error) {
+func parseSigner(path, passphrase string) (ssh.Signer, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read key: %w", err)
 	}
-	signer, err := ssh.ParsePrivateKey(data)
+	return parsePrivateKey(data, passphrase)
+}
+
+func parsePrivateKey(data []byte, passphrase string) (ssh.Signer, error) {
+	var signer ssh.Signer
+	var err error
+	if passphrase != "" {
+		signer, err = ssh.ParsePrivateKeyWithPassphrase(data, []byte(passphrase))
+	} else {
+		signer, err = ssh.ParsePrivateKey(data)
+	}
+	var missing *ssh.PassphraseMissingError
+	if errors.As(err, &missing) {
+		return nil, errors.New("PASSPHRASE_REQUIRED: this key is encrypted, enter its passphrase")
+	}
 	if err != nil {
 		return nil, fmt.Errorf("parse key: %w", err)
 	}
 	return signer, nil
+}
+
+func parseCert(data []byte, signer ssh.Signer) (*ssh.Certificate, error) {
+	pub, _, _, _, err := ssh.ParseAuthorizedKey(data)
+	if err != nil {
+		return nil, fmt.Errorf("parse certificate: %w", err)
+	}
+	cert, ok := pub.(*ssh.Certificate)
+	if !ok {
+		return nil, errors.New("not an OpenSSH certificate (expected *-cert.pub)")
+	}
+	if cert.CertType != ssh.UserCert {
+		return nil, errors.New("certificate is not a user certificate")
+	}
+	if string(cert.Key.Marshal()) != string(signer.PublicKey().Marshal()) {
+		return nil, errors.New("certificate does not match the private key")
+	}
+	return cert, nil
+}
+
+// loadSigners returns the certificate signer first (when present) so servers
+// that trust the CA accept it, with the bare key as a fallback.
+func loadSigners(keyPath, passphrase, certPath string) ([]ssh.Signer, error) {
+	signer, err := parseSigner(keyPath, passphrase)
+	if err != nil {
+		return nil, err
+	}
+	if certPath == "" {
+		return []ssh.Signer{signer}, nil
+	}
+	data, err := os.ReadFile(certPath)
+	if err != nil {
+		return nil, fmt.Errorf("read certificate: %w", err)
+	}
+	cert, err := parseCert(data, signer)
+	if err != nil {
+		return nil, err
+	}
+	certSigner, err := ssh.NewCertSigner(cert, signer)
+	if err != nil {
+		return nil, err
+	}
+	return []ssh.Signer{certSigner, signer}, nil
+}
+
+// InspectKey validates a private key (and optional certificate) and returns
+// JSON {type, fingerprint, publicKey, cert?: {keyId, principals, validBefore}}.
+// Errors starting with PASSPHRASE_REQUIRED mean the key needs a passphrase.
+func InspectKey(keyData, passphrase, certData string) (string, error) {
+	signer, err := parsePrivateKey([]byte(keyData), passphrase)
+	if err != nil {
+		return "", err
+	}
+	pub := signer.PublicKey()
+	out := map[string]any{
+		"type":        pub.Type(),
+		"fingerprint": ssh.FingerprintSHA256(pub),
+		"publicKey":   strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub))),
+	}
+	if strings.TrimSpace(certData) != "" {
+		cert, err := parseCert([]byte(certData), signer)
+		if err != nil {
+			return "", err
+		}
+		info := map[string]any{"keyId": cert.KeyId, "principals": cert.ValidPrincipals}
+		if cert.ValidBefore != ssh.CertTimeInfinity {
+			info["validBefore"] = time.Unix(int64(cert.ValidBefore), 0).Format(time.RFC3339)
+		}
+		out["cert"] = info
+	}
+	b, err := json.Marshal(out)
+	return string(b), err
 }

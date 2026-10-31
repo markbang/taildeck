@@ -93,8 +93,10 @@ data class SshProfile(
     val port: Int = 22,
     val auth: SshAuth = SshAuth.TAILSCALE,
     val password: String = "",
+    val keyId: String = SshIdentity.BUILTIN,
 ) {
-    fun toJson(): JSONObject = JSONObject().put("user", user).put("port", port).put("auth", auth.name).put("password", password)
+    fun toJson(): JSONObject =
+        JSONObject().put("user", user).put("port", port).put("auth", auth.name).put("password", password).put("keyId", keyId)
 
     companion object {
         fun parse(o: JSONObject) = SshProfile(
@@ -102,7 +104,61 @@ data class SshProfile(
             port = o.optInt("port", 22),
             auth = runCatching { SshAuth.valueOf(o.optString("auth")) }.getOrDefault(SshAuth.TAILSCALE),
             password = o.optString("password"),
+            keyId = o.optString("keyId", SshIdentity.BUILTIN),
         )
+    }
+}
+
+data class SshIdentity(
+    val id: String,
+    val name: String,
+    val type: String,
+    val fingerprint: String,
+    val publicKey: String,
+    val passphrase: String = "",
+    val certKeyId: String? = null,
+    val certPrincipals: List<String> = emptyList(),
+    val certValidBefore: String? = null,
+) {
+    val hasCert: Boolean get() = certKeyId != null
+    val builtin: Boolean get() = id == BUILTIN
+
+    fun toJson(): JSONObject = JSONObject()
+        .put("id", id).put("name", name).put("type", type).put("fingerprint", fingerprint)
+        .put("publicKey", publicKey).put("passphrase", passphrase)
+        .put("certKeyId", certKeyId).put("certPrincipals", JSONArray(certPrincipals)).put("certValidBefore", certValidBefore)
+
+    companion object {
+        const val BUILTIN = "builtin"
+
+        fun parse(o: JSONObject) = SshIdentity(
+            id = o.getString("id"),
+            name = o.optString("name"),
+            type = o.optString("type"),
+            fingerprint = o.optString("fingerprint"),
+            publicKey = o.optString("publicKey"),
+            passphrase = o.optString("passphrase"),
+            certKeyId = if (o.isNull("certKeyId")) null else o.optString("certKeyId"),
+            certPrincipals = o.optJSONArray("certPrincipals").strings(),
+            certValidBefore = if (o.isNull("certValidBefore")) null else o.optString("certValidBefore").ifEmpty { null },
+        )
+
+        /** Builds an identity from the JSON returned by Tsbridge.inspectKey. */
+        fun fromInspect(id: String, name: String, passphrase: String, json: String): SshIdentity {
+            val o = JSONObject(json)
+            val cert = o.optJSONObject("cert")
+            return SshIdentity(
+                id = id,
+                name = name,
+                type = o.optString("type"),
+                fingerprint = o.optString("fingerprint"),
+                publicKey = o.optString("publicKey"),
+                passphrase = passphrase,
+                certKeyId = cert?.optString("keyId"),
+                certPrincipals = cert?.optJSONArray("principals").strings(),
+                certValidBefore = cert?.optString("validBefore")?.ifEmpty { null },
+            )
+        }
     }
 }
 

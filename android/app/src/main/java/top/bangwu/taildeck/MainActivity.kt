@@ -60,7 +60,7 @@ private fun AppNav() {
         composable("home") {
             HomeScreen(
                 onNode = { nav.navigate(Routes.node(it)) },
-                onService = { nav.navigate(Routes.web(it.url, it.name)) },
+                onOpenInApp = { nav.navigate(Routes.web(it.url, it.name)) },
                 onSettings = { nav.navigate("settings") },
             )
         }
@@ -68,7 +68,7 @@ private fun AppNav() {
             NodeScreen(
                 name = it.arguments?.getString("name").orEmpty(),
                 onBack = { nav.popBackStack() },
-                onWeb = { url, title -> nav.navigate(Routes.web(url, title)) },
+                onOpenInApp = { url, title -> nav.navigate(Routes.web(url, title)) },
                 onSsh = { node -> nav.navigate(Routes.ssh(node)) },
             )
         }

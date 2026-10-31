@@ -8,8 +8,10 @@ An Android app for the machines in your tailnet. It runs its own Tailscale node 
 
 - Sign in with Tailscale or a Headscale control server (browser login or auth key)
 - Node list with online state, OS, addresses, tags, routes, direct/relay path and ping
-- Per-node services: add manually or scan common ports, open them in the built-in WebView
-- Built-in SSH terminal (xterm.js): Tailscale SSH, password or an in-app ed25519 key
+- Per-node services: add manually or scan common ports, open them in your default browser (cookies and saved passwords are shared with it), or in the app
+- Built-in SSH terminal (xterm.js): Tailscale SSH, password, the built-in ed25519 key, or imported keys (passphrase-protected keys and OpenSSH certificates supported)
+
+Browsers reach the tailnet through a loopback gateway: `http://<node>-<port>.localhost:18680/` (append `s` to the port for HTTPS services, e.g. `nas-5001s`). Each service gets its own origin. The gateway skips TLS verification for upstream services and is reachable by any app on the device.
 
 ### Build
 
@@ -29,8 +31,10 @@ The release build is signed with the debug key. Change `signingConfig` before di
 
 - 支持 Tailscale 官方或 Headscale 控制服务器，可浏览器登录或使用 Auth Key
 - 节点列表：在线状态、系统、地址、标签、子网路由、直连或中继、Ping
-- 节点服务：手动添加或扫描常用端口，在内置 WebView 中打开
-- 内置 SSH 终端（xterm.js）：支持 Tailscale SSH、密码、App 内生成的 ed25519 密钥
+- 节点服务：手动添加或扫描常用端口，用系统默认浏览器打开（Cookie 和保存的密码与浏览器共用），也可在 App 内打开
+- 内置 SSH 终端（xterm.js）：支持 Tailscale SSH、密码、内置 ed25519 密钥，以及导入的私钥（支持密码短语和 OpenSSH 证书）
+
+浏览器通过本机网关访问 Tailnet：`http://<节点>-<端口>.localhost:18680/`（HTTPS 服务在端口后加 `s`，如 `nas-5001s`）。每个服务是独立的源。网关不校验上游服务的 TLS 证书，且本机任何 App 都能访问它。
 
 ### 构建
 

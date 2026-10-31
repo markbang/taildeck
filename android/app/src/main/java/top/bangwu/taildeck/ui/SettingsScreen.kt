@@ -12,12 +12,17 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Logout
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.VpnKeyOff
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -46,6 +51,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import top.bangwu.taildeck.BuildConfig
 import top.bangwu.taildeck.R
+import top.bangwu.taildeck.SshIdentity
 import top.bangwu.taildeck.TaildeckApp
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -56,9 +62,11 @@ fun SettingsScreen(onBack: () -> Unit, onLogs: () -> Unit, onLoggedOut: () -> Un
     val scope = rememberCoroutineScope()
     val state by app.tailscale.state.collectAsStateWithLifecycle()
     val status = state.status
-    var publicKey by remember { mutableStateOf<String?>(null) }
+    val identities by app.keys.list.collectAsStateWithLifecycle()
     var confirmLogout by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { publicKey = runCatching { app.tailscale.publicKey() }.getOrNull() }
+    var importing by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf<SshIdentity?>(null) }
+    LaunchedEffect(Unit) { runCatching { app.keys.ensureBuiltin() } }
 
     Scaffold(
         topBar = {
@@ -79,21 +87,46 @@ fun SettingsScreen(onBack: () -> Unit, onLogs: () -> Unit, onLoggedOut: () -> Un
                 ListItem(
                     overlineContent = { Text(stringResource(R.string.this_device)) },
                     headlineContent = { Text(self.dnsName.ifEmpty { self.name }) },
-                    supportingContent = { Text(self.ips.joinToString("  "), fontFamily = FontFamily.Monospace) },
+                    supportingContent = {
+                        Text(
+                            self.ips.joinToString("  ") + "\n" + stringResource(R.string.notif_text, app.tailscale.gatewayPort),
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    },
                     modifier = Modifier.clickable { self.ipv4?.let(context::copy) },
                 )
             }
             HorizontalDivider()
 
-            SectionLabel(stringResource(R.string.ssh_key))
+            SectionLabel(stringResource(R.string.ssh_keys))
+            identities.forEach { id ->
+                var menu by remember { mutableStateOf(false) }
+                ListItem(
+                    leadingContent = { Icon(if (id.hasCert) Icons.Outlined.VerifiedUser else Icons.Outlined.Key, null) },
+                    headlineContent = { Text(if (id.builtin) stringResource(R.string.key_builtin) else id.name) },
+                    supportingContent = { Text(identitySubtitle(id), maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                    trailingContent = {
+                        IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
+                        DropdownMenu(menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.copy_public_key)) },
+                                onClick = { menu = false; context.copy(id.publicKey) },
+                            )
+                            if (!id.builtin) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.delete)) },
+                                    onClick = { menu = false; deleting = id },
+                                )
+                            }
+                        }
+                    },
+                    modifier = Modifier.clickable { context.copy(id.publicKey) },
+                )
+            }
             ListItem(
-                leadingContent = { Icon(Icons.Outlined.Key, null) },
-                headlineContent = {
-                    Text(publicKey ?: "…", fontFamily = FontFamily.Monospace, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                },
-                trailingContent = {
-                    IconButton(onClick = { publicKey?.let(context::copy) }) { Icon(Icons.Outlined.ContentCopy, stringResource(R.string.copy)) }
-                },
+                leadingContent = { Icon(Icons.Outlined.Add, null) },
+                headlineContent = { Text(stringResource(R.string.import_key)) },
+                modifier = Modifier.clickable { importing = true },
             )
             ListItem(
                 leadingContent = { Icon(Icons.Outlined.VpnKeyOff, null) },
@@ -122,6 +155,21 @@ fun SettingsScreen(onBack: () -> Unit, onLogs: () -> Unit, onLoggedOut: () -> Un
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+
+    if (importing) KeyImportDialog(onDismiss = { importing = false }) { importing = false }
+
+    deleting?.let { id ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            text = { Text(stringResource(R.string.delete_key_confirm, id.name)) },
+            confirmButton = {
+                TextButton(onClick = { app.keys.delete(id.id); deleting = null }) {
+                    Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.cancel)) } },
+        )
     }
 
     if (confirmLogout) {

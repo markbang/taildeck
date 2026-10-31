@@ -1,16 +1,20 @@
 package top.bangwu.taildeck.ui
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.graphics.Bitmap
-import android.net.http.SslError
+import android.net.Uri
+import android.webkit.CookieManager
 import android.webkit.HttpAuthHandler
-import android.webkit.SslErrorHandler
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
@@ -34,7 +39,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,28 +54,29 @@ import androidx.compose.ui.viewinterop.AndroidView
 import top.bangwu.taildeck.R
 import top.bangwu.taildeck.TaildeckApp
 
-private class SslPrompt(val host: String, val handler: SslErrorHandler)
 private class AuthPrompt(val host: String, val handler: HttpAuthHandler)
 
-// Hosts the user accepted a bad certificate for, kept for the process lifetime.
-private val trustedHosts = mutableSetOf<String>()
-
+/** In-app fallback; the WebView loads the same loopback gateway URL a browser would. */
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WebScreen(url: String, title: String, onBack: () -> Unit) {
     val app = TaildeckApp.instance
     val context = LocalContext.current
-    var proxyReady by remember { mutableStateOf<Boolean?>(null) }
+    val localUrl = remember(url) { runCatching { app.tailscale.localUrl(url) } }
     var pageTitle by remember { mutableStateOf(title) }
-    var currentUrl by remember { mutableStateOf(url) }
     var progress by remember { mutableStateOf(0) }
     var canGoBack by remember { mutableStateOf(false) }
-    var sslPrompt by remember { mutableStateOf<SslPrompt?>(null) }
     var authPrompt by remember { mutableStateOf<AuthPrompt?>(null) }
     var webView by remember { mutableStateOf<WebView?>(null) }
+    var fileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
 
-    LaunchedEffect(Unit) { proxyReady = app.tailscale.ensureWebProxy() }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val uris = if (result.resultCode == Activity.RESULT_OK) WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data) else null
+        fileCallback?.onReceiveValue(uris)
+        fileCallback = null
+    }
+
     DisposableEffect(Unit) { onDispose { webView?.destroy() } }
     BackHandler(enabled = canGoBack) { webView?.goBack() }
 
@@ -83,7 +88,7 @@ fun WebScreen(url: String, title: String, onBack: () -> Unit) {
                         Column {
                             Text(pageTitle.ifEmpty { title }, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
-                                currentUrl,
+                                url,
                                 style = MaterialTheme.typography.bodySmall,
                                 fontFamily = FontFamily.Monospace,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -100,6 +105,9 @@ fun WebScreen(url: String, title: String, onBack: () -> Unit) {
                             IconButton(onClick = { webView?.goBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
                         }
                         IconButton(onClick = { webView?.reload() }) { Icon(Icons.Outlined.Refresh, stringResource(R.string.reload)) }
+                        IconButton(onClick = { context.openInBrowser(url) }) {
+                            Icon(Icons.AutoMirrored.Outlined.OpenInNew, null)
+                        }
                     },
                 )
                 if (progress in 1..99) LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
@@ -107,33 +115,38 @@ fun WebScreen(url: String, title: String, onBack: () -> Unit) {
         },
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
-            when (proxyReady) {
-                null -> Unit
-                false -> Text(stringResource(R.string.web_no_proxy), Modifier.padding(24.dp))
-                true -> AndroidView(
+            localUrl.onFailure { Text(it.message ?: "", Modifier.padding(24.dp)) }
+            localUrl.onSuccess { start ->
+                AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
                         WebView(ctx).apply {
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
+                            settings.databaseEnabled = true
+                            settings.mediaPlaybackRequiresUserGesture = false
                             settings.useWideViewPort = true
                             settings.loadWithOverviewMode = true
                             settings.builtInZoomControls = true
                             settings.displayZoomControls = false
                             settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                            // Some apps serve stripped-down pages to the "; wv" WebView UA.
+                            settings.userAgentString = settings.userAgentString.replace("; wv)", ")")
+                            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                             webViewClient = object : WebViewClient() {
                                 override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
-                                    currentUrl = url
-                                }
-
-                                override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
-                                    currentUrl = url
                                     canGoBack = view.canGoBack()
                                 }
 
-                                override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
-                                    val host = runCatching { java.net.URI(error.url).host }.getOrNull() ?: error.url
-                                    if (host in trustedHosts) handler.proceed() else sslPrompt = SslPrompt(host, handler)
+                                override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+                                    canGoBack = view.canGoBack()
+                                }
+
+                                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                                    val scheme = request.url.scheme
+                                    if (scheme == "http" || scheme == "https") return false
+                                    runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, request.url)) }
+                                    return true
                                 }
 
                                 override fun onReceivedHttpAuthRequest(view: WebView, handler: HttpAuthHandler, host: String, realm: String) {
@@ -148,33 +161,29 @@ fun WebScreen(url: String, title: String, onBack: () -> Unit) {
                                 override fun onReceivedTitle(view: WebView, t: String?) {
                                     if (!t.isNullOrBlank() && !t.startsWith("http")) pageTitle = t
                                 }
+
+                                override fun onShowFileChooser(
+                                    view: WebView,
+                                    callback: ValueCallback<Array<Uri>>,
+                                    params: FileChooserParams,
+                                ): Boolean {
+                                    fileCallback?.onReceiveValue(null)
+                                    fileCallback = callback
+                                    return runCatching { filePicker.launch(params.createIntent()) }
+                                        .onFailure { fileCallback = null; callback.onReceiveValue(null) }
+                                        .isSuccess
+                                }
                             }
-                            setDownloadListener { _, _, _, _, _ ->
-                                Toast.makeText(ctx, R.string.web_download_unsupported, Toast.LENGTH_SHORT).show()
+                            setDownloadListener { downloadUrl, _, _, _, _ ->
+                                runCatching { ctx.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, Uri.parse(downloadUrl))) }
                             }
-                            loadUrl(url)
+                            loadUrl(start)
                             webView = this
                         }
                     },
                 )
             }
         }
-    }
-
-    sslPrompt?.let { p ->
-        AlertDialog(
-            onDismissRequest = { p.handler.cancel(); sslPrompt = null },
-            title = { Text(stringResource(R.string.web_cert_title)) },
-            text = { Text(stringResource(R.string.web_cert_body, p.host)) },
-            confirmButton = {
-                TextButton(onClick = { trustedHosts += p.host; p.handler.proceed(); sslPrompt = null }) {
-                    Text(stringResource(R.string.web_continue))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { p.handler.cancel(); sslPrompt = null }) { Text(stringResource(R.string.cancel)) }
-            },
-        )
     }
 
     authPrompt?.let { p ->

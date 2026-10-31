@@ -6,9 +6,8 @@ import android.net.LinkProperties
 import android.net.Network
 import android.os.Build
 import android.util.Log
-import androidx.webkit.ProxyConfig
-import androidx.webkit.ProxyController
-import androidx.webkit.WebViewFeature
+import android.content.Intent
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -19,7 +18,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -31,7 +29,6 @@ import top.bangwu.taildeck.tsbridge.Tsbridge
 import java.io.File
 import java.net.InetAddress
 import java.net.NetworkInterface
-import kotlin.coroutines.resume
 
 enum class Phase { STOPPED, STARTING, NEEDS_LOGIN, RUNNING, ERROR }
 
@@ -48,9 +45,7 @@ class Tailscale(private val context: Context, private val store: Store) {
     private val _state = MutableStateFlow(EngineState())
     val state: StateFlow<EngineState> = _state
     private var poller: Job? = null
-    private var proxyPort = 0L
     private val stateDir = File(context.filesDir, "tailscale").apply { mkdirs() }
-    val keyPath: String = File(context.filesDir, "id_ed25519").absolutePath
 
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
 
@@ -77,6 +72,7 @@ class Tailscale(private val context: Context, private val store: Store) {
             _state.update { it.copy(phase = phase, authUrl = authURL.ifEmpty { null }, error = null) }
             if (phase == Phase.RUNNING) {
                 store.configured = true
+                startKeepAlive()
                 refreshNow()
             }
         }
@@ -97,8 +93,11 @@ class Tailscale(private val context: Context, private val store: Store) {
                 _state.value = EngineState(phase = Phase.STARTING)
                 val hostname = store.hostname.ifBlank { defaultHostname() }
                 try {
-                    Tsbridge.start(stateDir.absolutePath, hostname, store.controlUrl.trim(), authKey.trim(), platform, listener)
-                    proxyPort = Tsbridge.proxyPort()
+                    Tsbridge.start(
+                        stateDir.absolutePath, hostname, store.controlUrl.trim(), authKey.trim(),
+                        store.gatewayPort.toLong(), platform, listener,
+                    )
+                    store.gatewayPort = Tsbridge.gatewayPort().toInt()
                     startPolling()
                 } catch (e: Exception) {
                     Log.e(TAG, "start failed", e)
@@ -113,6 +112,7 @@ class Tailscale(private val context: Context, private val store: Store) {
             lock.withLock {
                 poller?.cancel()
                 Tsbridge.stop()
+                stopKeepAlive()
                 _state.value = EngineState()
             }
         }
@@ -123,6 +123,7 @@ class Tailscale(private val context: Context, private val store: Store) {
             poller?.cancel()
             runCatching { Tsbridge.logout() }
             Tsbridge.stop()
+            stopKeepAlive()
             store.configured = false
             _state.value = EngineState()
         }
@@ -158,27 +159,24 @@ class Tailscale(private val context: Context, private val store: Store) {
         (0 until arr.length()).map { arr.getInt(it) }.sorted()
     }
 
-    suspend fun publicKey(): String = withContext(Dispatchers.IO) { Tsbridge.ensureKey(keyPath, "taildeck") }
-
     fun forgetHostKeys() = Tsbridge.forgetHostKeys(stateDir.absolutePath)
 
     fun logs(): String = Tsbridge.logs()
 
-    private var appliedProxyPort = 0L
+    /** Maps a tailnet URL to the loopback gateway URL any browser can open. */
+    fun localUrl(url: String): String = Tsbridge.localURL(url)
 
-    // Routes every WebView request through the in-process tailnet proxy.
-    suspend fun ensureWebProxy(): Boolean {
-        val port = proxyPort
-        if (port == 0L || !WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) return false
-        if (appliedProxyPort == port) return true
-        val config = ProxyConfig.Builder().addProxyRule("127.0.0.1:$port").build()
-        withContext(Dispatchers.Main) {
-            suspendCancellableCoroutine { cont ->
-                ProxyController.getInstance().setProxyOverride(config, { it.run() }) { cont.resume(Unit) }
-            }
-        }
-        appliedProxyPort = port
-        return true
+    val gatewayPort: Int get() = store.gatewayPort
+
+    // Opening a service hands the screen to the browser; without a foreground
+    // service Android would freeze or kill the process serving the gateway.
+    private fun startKeepAlive() {
+        runCatching { ContextCompat.startForegroundService(context, Intent(context, TailnetService::class.java)) }
+            .onFailure { Log.w(TAG, "keep-alive service: ${it.message}") }
+    }
+
+    private fun stopKeepAlive() {
+        context.stopService(Intent(context, TailnetService::class.java))
     }
 
     private fun interfacesJson(): String {

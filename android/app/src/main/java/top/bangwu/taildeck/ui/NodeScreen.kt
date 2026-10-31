@@ -73,7 +73,7 @@ private data class ServiceDraft(val id: String?, val name: String, val scheme: S
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun NodeScreen(name: String, onBack: () -> Unit, onWeb: (String, String) -> Unit, onSsh: (String) -> Unit) {
+fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -> Unit, onSsh: (String) -> Unit) {
     val app = TaildeckApp.instance
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -110,7 +110,7 @@ fun NodeScreen(name: String, onBack: () -> Unit, onWeb: (String, String) -> Unit
                         Spacer(Modifier.width(6.dp))
                         Text(stringResource(R.string.ssh))
                     }
-                    FilledTonalButton(onClick = { onWeb("http://$name/", name) }, modifier = Modifier.weight(1f)) {
+                    FilledTonalButton(onClick = { context.openInBrowser("http://$name/") }, modifier = Modifier.weight(1f)) {
                         Icon(Icons.Outlined.Language, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(stringResource(R.string.open_web))
@@ -212,7 +212,9 @@ fun NodeScreen(name: String, onBack: () -> Unit, onWeb: (String, String) -> Unit
             items(services, key = { it.id }) { svc ->
                 ServiceRow(
                     svc,
-                    onOpen = { onWeb(svc.url, svc.name) },
+                    onOpen = { context.openInBrowser(svc.url) },
+                    onOpenInApp = { onOpenInApp(svc.url, svc.name) },
+                    onCopyLink = { context.copyBrowserLink(svc.url) },
                     onEdit = { draft = draftOf(svc) },
                     onDelete = { app.store.deleteService(svc.id) },
                 )
@@ -296,7 +298,14 @@ private fun InfoRow(label: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun ServiceRow(svc: Service, onOpen: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit) {
+private fun ServiceRow(
+    svc: Service,
+    onOpen: () -> Unit,
+    onOpenInApp: () -> Unit,
+    onCopyLink: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
     var menu by remember { mutableStateOf(false) }
     ListItem(
         headlineContent = { Text(svc.name) },
@@ -304,6 +313,8 @@ private fun ServiceRow(svc: Service, onOpen: () -> Unit, onEdit: () -> Unit, onD
         trailingContent = {
             IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
             DropdownMenu(menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text(stringResource(R.string.open_in_app)) }, onClick = { menu = false; onOpenInApp() })
+                DropdownMenuItem(text = { Text(stringResource(R.string.copy_link)) }, onClick = { menu = false; onCopyLink() })
                 DropdownMenuItem(text = { Text(stringResource(R.string.edit)) }, onClick = { menu = false; onEdit() })
                 DropdownMenuItem(text = { Text(stringResource(R.string.delete)) }, onClick = { menu = false; onDelete() })
             }
