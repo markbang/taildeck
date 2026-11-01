@@ -401,10 +401,15 @@ class TerminalView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         if (closed) return
         if (cells.size < cols * rows * 4) cells = IntArray(cols * rows * 4)
-        val extraLen = GhosttyNative.snapshot(handle, cells, meta, extra)
+        var extraLen = GhosttyNative.snapshot(handle, cells, meta, extra)
         val c = meta[0]
         val r = meta[1]
         if (c == 0 || r == 0) return
+        if (c * r * 4 > cells.size) {
+            // The terminal grid can briefly differ from the view's; size to the terminal.
+            cells = IntArray(c * r * 4)
+            extraLen = GhosttyNative.snapshot(handle, cells, meta, extra)
+        }
         val defFg = meta[6]
         val defBg = meta[7]
         // Compose doesn't clip hosted views, and drawColor would paint over

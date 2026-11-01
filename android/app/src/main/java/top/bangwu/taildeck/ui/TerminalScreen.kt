@@ -145,6 +145,8 @@ private class SshController(private val keys: SshKeys, private val res: android.
                     }
                     session = s
                     onState(Conn.Connected)
+                    // Resizes during the handshake were dropped; sync the PTY now.
+                    view?.let { resize(it.cols, it.rows) }
                 }
             } catch (e: Exception) {
                 feed("\r\n\u001b[31m${e.message}\u001b[0m\r\n".toByteArray())
