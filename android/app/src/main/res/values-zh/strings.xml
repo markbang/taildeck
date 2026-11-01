@@ -124,9 +124,14 @@
     <string name="ssh_auth_rejected">服务器拒绝了 %1$s@%2$s 的认证。</string>
     <string name="ssh_auth_used_key">使用的公钥：%1$s %2$s</string>
     <string name="ssh_hint_cert_principal">• 证书只对 [%1$s] 有效，不包含 %2$s</string>
-    <string name="ssh_hint_authorized_keys">• 把公钥加到节点的 ~%1$s/.ssh/authorized_keys（设置 → SSH 密钥 → 复制公钥）</string>
+    <string name="ssh_hint_authorized_keys">• 公钥要在这台节点的 ~%1$s/.ssh/authorized_keys 里（可在节点上用 ssh-keygen -lf ~%1$s/.ssh/authorized_keys 对比指纹）</string>
     <string name="ssh_hint_root">• 以 root 登录时，sshd_config 可能设置了 PermitRootLogin no</string>
-    <string name="ssh_hint_try_tailscale">• 如果节点开了 Tailscale SSH，改用「Tailscale SSH」方式</string>
     <string name="ssh_hint_password">• 用户名或密码错误，或服务器禁用了密码登录（PasswordAuthentication no）</string>
     <string name="ssh_hint_tailscale">• 节点没开 Tailscale SSH（tailscale set --ssh），或 ACL 不允许本设备以 %1$s 登录。可改用密码或密钥。</string>
+    <string name="ssh_auth_server">服务端：%1$s</string>
+    <string name="ssh_hint_tailscale_server">• 22 端口由 Tailscale SSH 接管，它不看私钥和密码，只按 Tailnet 策略判断。在策略的 ssh 规则里允许本设备以 %1$s 登录，或在节点上关闭 Tailscale SSH（tailscale set --ssh=false）改用 OpenSSH。</string>
+    <string name="ssh_hint_works_elsewhere">• 如果这把私钥在别的电脑上能登录，在那台电脑运行 ssh -v %1$s@%2$s，看「Authenticated … using」和「Server accepts key」两行，就知道它实际用的是哪把钥匙、哪个用户、连的哪个地址</string>
+    <string name="ssh_hint_dropbear_keys">• Dropbear（OpenWrt）的 root 公钥放在 /etc/dropbear/authorized_keys</string>
+    <string name="ssh_hint_from_restriction">• 公钥那一行带 from=\"…\" 限制，或 sshd_config 里有 Match Address / AllowUsers 时，来自 Tailnet 地址（100.x）的连接会被拒</string>
+    <string name="ssh_hint_server_log">• 节点日志会写明具体原因：journalctl -u ssh -n 20</string>
 </resources>

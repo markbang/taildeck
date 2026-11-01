@@ -69,10 +69,11 @@ func DialSSH(host string, port int, user, password, keyPath, passphrase, certPat
 	addr := net.JoinHostPort(e.resolveHost(host), fmt.Sprint(port))
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	conn, err := e.srv.Dial(ctx, "tcp", addr)
+	raw, err := e.srv.Dial(ctx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", addr, err)
 	}
+	conn := &identConn{Conn: raw}
 	config := &ssh.ClientConfig{
 		User:            user,
 		Auth:            auths,
@@ -88,6 +89,11 @@ func DialSSH(host string, port int, user, password, keyPath, passphrase, certPat
 	c, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
 	if err != nil {
 		conn.Close()
+		// The server's version string tells OpenSSH, Dropbear and Tailscale
+		// SSH apart, which decides where keys have to be authorized.
+		if v := conn.serverVersion(); v != "" {
+			return nil, fmt.Errorf("%w [server %s]", err, v)
+		}
 		return nil, err
 	}
 	conn.SetDeadline(time.Time{})
@@ -166,6 +172,35 @@ func (s *SSHSession) Close() {
 		s.session.Close()
 		s.client.Close()
 	})
+}
+
+// identConn records the start of the server stream to recover its
+// "SSH-2.0-..." identification line when the handshake fails.
+type identConn struct {
+	net.Conn
+	mu   sync.Mutex
+	head []byte
+}
+
+func (c *identConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	c.mu.Lock()
+	if len(c.head) < 512 && n > 0 {
+		c.head = append(c.head, p[:min(n, 512-len(c.head))]...)
+	}
+	c.mu.Unlock()
+	return n, err
+}
+
+func (c *identConn) serverVersion() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, line := range strings.Split(string(c.head), "\n") {
+		if strings.HasPrefix(line, "SSH-") {
+			return strings.TrimSpace(line)
+		}
+	}
+	return ""
 }
 
 // tofuHostKeys trusts a host key on first use and rejects later changes.

@@ -130,32 +130,47 @@ private class SshController(private val keys: SshKeys, private val res: android.
             } catch (e: Exception) {
                 feed("\r\n\u001b[31m${e.message}\u001b[0m\r\n".toByteArray())
                 if (e.message?.contains("unable to authenticate") == true) {
-                    authHints(host, profile).forEach { feed("\u001b[33m$it\u001b[0m\r\n".toByteArray()) }
+                    authHints(host, profile, e.message.orEmpty()).forEach { feed("\u001b[33m$it\u001b[0m\r\n".toByteArray()) }
                 }
                 main.post { onState(Conn.Closed(e.message ?: "")) }
             }
         }
     }
 
-    // The server only says which methods failed; spell out the usual causes.
-    private fun authHints(host: String, profile: SshProfile): List<String> {
+    // The server only says which methods failed; spell out the usual causes
+    // for the kind of SSH server we actually reached.
+    private fun authHints(host: String, profile: SshProfile, error: String): List<String> {
         val user = profile.user
+        val server = Regex("""\[server (SSH-[^\]]+)]""").find(error)?.groupValues?.get(1)
         val lines = mutableListOf("", res.getString(R.string.ssh_auth_rejected, user, host))
+        server?.let { lines += res.getString(R.string.ssh_auth_server, it) }
+        if (server?.contains("Tailscale", ignoreCase = true) == true) {
+            lines += res.getString(R.string.ssh_hint_tailscale_server, user)
+            return lines
+        }
+        val dropbear = server?.contains("dropbear", ignoreCase = true) == true
         when (profile.auth) {
             SshAuth.KEY -> {
-                keys.list.value.firstOrNull { it.id == profile.keyId }?.let { id ->
-                    lines += res.getString(R.string.ssh_auth_used_key, id.type, id.fingerprint)
-                    if (id.hasCert && user !in id.certPrincipals) {
-                        lines += res.getString(R.string.ssh_hint_cert_principal, id.certPrincipals.joinToString(","), user)
-                    }
+                val id = keys.list.value.firstOrNull { it.id == profile.keyId }
+                id?.let { lines += res.getString(R.string.ssh_auth_used_key, it.type, it.fingerprint) }
+                if (id != null && id.hasCert && user !in id.certPrincipals) {
+                    lines += res.getString(R.string.ssh_hint_cert_principal, id.certPrincipals.joinToString(","), user)
                 }
-                lines += res.getString(R.string.ssh_hint_authorized_keys, user)
-                if (user == "root") lines += res.getString(R.string.ssh_hint_root)
-                lines += res.getString(R.string.ssh_hint_try_tailscale)
+                lines += res.getString(R.string.ssh_hint_works_elsewhere, user, host)
+                lines += if (dropbear && user == "root") {
+                    res.getString(R.string.ssh_hint_dropbear_keys)
+                } else {
+                    res.getString(R.string.ssh_hint_authorized_keys, user)
+                }
+                if (!dropbear) {
+                    if (user == "root") lines += res.getString(R.string.ssh_hint_root)
+                    lines += res.getString(R.string.ssh_hint_from_restriction)
+                    lines += res.getString(R.string.ssh_hint_server_log)
+                }
             }
             SshAuth.PASSWORD -> {
                 lines += res.getString(R.string.ssh_hint_password)
-                if (user == "root") lines += res.getString(R.string.ssh_hint_root)
+                if (user == "root" && !dropbear) lines += res.getString(R.string.ssh_hint_root)
             }
             SshAuth.TAILSCALE -> lines += res.getString(R.string.ssh_hint_tailscale, user)
         }
