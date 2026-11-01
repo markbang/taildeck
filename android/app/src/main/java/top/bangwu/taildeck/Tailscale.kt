@@ -8,6 +8,9 @@ import android.os.Build
 import android.util.Log
 import android.content.Intent
 import androidx.core.content.ContextCompat
+import androidx.webkit.ProxyConfig
+import androidx.webkit.ProxyController
+import androidx.webkit.WebViewFeature
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -18,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -29,6 +33,7 @@ import top.bangwu.taildeck.tsbridge.Tsbridge
 import java.io.File
 import java.net.InetAddress
 import java.net.NetworkInterface
+import kotlin.coroutines.resume
 
 enum class Phase { STOPPED, STARTING, NEEDS_LOGIN, RUNNING, ERROR }
 
@@ -167,6 +172,27 @@ class Tailscale(private val context: Context, private val store: Store) {
     fun localUrl(url: String): String = Tsbridge.localURL(url)
 
     val gatewayPort: Int get() = store.gatewayPort
+
+    private var appliedProxyPort = 0
+
+    /**
+     * Points every WebView in the app at the gateway, which also acts as a
+     * forward proxy: tailnet hosts go through the node, everything else direct.
+     * Returns false when this WebView build can't override proxies.
+     */
+    suspend fun ensureWebProxy(): Boolean {
+        val port = store.gatewayPort
+        if (_state.value.phase != Phase.RUNNING || !WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) return false
+        if (appliedProxyPort == port) return true
+        val config = ProxyConfig.Builder().addProxyRule("127.0.0.1:$port").build()
+        withContext(Dispatchers.Main) {
+            suspendCancellableCoroutine { cont ->
+                ProxyController.getInstance().setProxyOverride(config, { it.run() }) { cont.resume(Unit) }
+            }
+        }
+        appliedProxyPort = port
+        return true
+    }
 
     // Opening a service hands the screen to the browser; without a foreground
     // service Android would freeze or kill the process serving the gateway.

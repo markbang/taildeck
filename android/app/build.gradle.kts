@@ -7,13 +7,14 @@ plugins {
 android {
     namespace = "top.bangwu.taildeck"
     compileSdk = 36
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "top.bangwu.taildeck"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.1.2"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
@@ -37,6 +38,13 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.31.6"
+        }
     }
 
     packaging {
@@ -67,4 +75,5 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
     implementation("androidx.browser:browser:1.9.0")
+    implementation("androidx.webkit:webkit:1.14.0")
 }

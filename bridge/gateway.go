@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -37,6 +38,7 @@ type gateway struct {
 	e    *engine
 
 	transport *http.Transport
+	forward   *httputil.ReverseProxy
 	proxies   sync.Map // label -> *httputil.ReverseProxy
 }
 
@@ -131,9 +133,7 @@ func startGateway(e *engine, preferredPort int) (*gateway, error) {
 	g := &gateway{ln: ln, port: ln.Addr().(*net.TCPAddr).Port, e: e}
 	g.transport = &http.Transport{
 		DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
-			ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			defer cancel()
-			return e.srv.Dial(ctx, "tcp", e.resolveHostPort(addr))
+			return e.dialAny(ctx, addr)
 		},
 		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
 		ForceAttemptHTTP2:     true,
@@ -142,6 +142,17 @@ func startGateway(e *engine, preferredPort int) (*gateway, error) {
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   15 * time.Second,
 		ResponseHeaderTimeout: 2 * time.Minute,
+	}
+	g.forward = &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL = pr.In.URL
+			pr.Out.Host = pr.In.Host
+			pr.Out.Header.Del("Proxy-Connection")
+			pr.Out.Header.Del("Proxy-Authorization")
+		},
+		Transport:     g.transport,
+		FlushInterval: -1,
+		ErrorHandler:  proxyError,
 	}
 	g.srv = &http.Server{Handler: g, ReadHeaderTimeout: 30 * time.Second}
 	go g.srv.Serve(ln)
@@ -158,6 +169,16 @@ func (g *gateway) localOrigin(t target) string {
 }
 
 func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// The same port doubles as a forward proxy for the in-app WebView, which
+	// can then load http://nas:5000 directly.
+	if r.Method == http.MethodConnect {
+		g.tunnel(w, r)
+		return
+	}
+	if r.URL.IsAbs() {
+		g.forward.ServeHTTP(w, r)
+		return
+	}
 	t, ok := parseLabel(r.Host)
 	if !ok {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -205,16 +226,51 @@ func (g *gateway) newProxy(t target) *httputil.ReverseProxy {
 			}
 			return nil
 		},
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			if errors.Is(err, context.Canceled) {
-				return
-			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusBadGateway)
-			fmt.Fprintf(w, `<!doctype html><meta name="viewport" content="width=device-width"><body style="font-family:sans-serif;padding:24px"><h3>%s</h3><p>%s</p></body>`,
-				html.EscapeString(remote), html.EscapeString(err.Error()))
-		},
+		ErrorHandler: proxyError,
 	}
+}
+
+func proxyError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusBadGateway)
+	fmt.Fprintf(w, `<!doctype html><meta name="viewport" content="width=device-width"><body style="font-family:sans-serif;padding:24px"><h3>%s</h3><p>%s</p></body>`,
+		html.EscapeString(r.Host), html.EscapeString(err.Error()))
+}
+
+func (g *gateway) tunnel(w http.ResponseWriter, r *http.Request) {
+	upstream, err := g.e.dialAny(r.Context(), r.Host)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		upstream.Close()
+		http.Error(w, "hijack unsupported", http.StatusInternalServerError)
+		return
+	}
+	client, buf, err := hj.Hijack()
+	if err != nil {
+		upstream.Close()
+		return
+	}
+	io.WriteString(client, "HTTP/1.1 200 Connection Established\r\n\r\n")
+	done := make(chan struct{})
+	go func() {
+		// Bytes the client sent right after the CONNECT may already be buffered.
+		io.Copy(upstream, buf)
+		if c, ok := upstream.(interface{ CloseWrite() error }); ok {
+			c.CloseWrite()
+		}
+		close(done)
+	}()
+	io.Copy(client, upstream)
+	client.Close()
+	upstream.Close()
+	<-done
 }
 
 // rewriteAbsolute maps absolute redirects back onto the gateway, including

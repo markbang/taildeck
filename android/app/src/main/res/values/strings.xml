@@ -116,4 +116,11 @@
     <string name="delete_key_confirm">Delete key \"%1$s\"?</string>
     <string name="ssh_choose_key">Key</string>
     <string name="file_too_large">File is too large</string>
+    <string name="open_in_browser">Open in browser</string>
+    <string name="open_services_in_app">Open services in app</string>
+    <string name="open_in_app_desc">Uses node:port addresses directly; logins stay in the app</string>
+    <string name="open_in_browser_desc">Uses your default browser via the localhost gateway; logins shared with the browser</string>
+    <string name="web_cert_title">Untrusted certificate</string>
+    <string name="web_cert_body">%1$s presented a certificate this device doesn\'t trust. Common for self-signed services. Continue anyway?</string>
+    <string name="web_continue">Continue</string>
 </resources>

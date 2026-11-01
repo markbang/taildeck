@@ -4,8 +4,10 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.graphics.Bitmap
 import android.net.Uri
+import android.net.http.SslError
 import android.webkit.CookieManager
 import android.webkit.HttpAuthHandler
+import android.webkit.SslErrorHandler
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -39,6 +41,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,15 +58,26 @@ import top.bangwu.taildeck.R
 import top.bangwu.taildeck.TaildeckApp
 
 private class AuthPrompt(val host: String, val handler: HttpAuthHandler)
+private class SslPrompt(val host: String, val handler: SslErrorHandler)
 
-/** In-app fallback; the WebView loads the same loopback gateway URL a browser would. */
+// Hosts the user accepted a bad certificate for, kept for the process lifetime.
+private val trustedHosts = mutableSetOf<String>()
+
+/**
+ * Loads the tailnet URL as-is through the gateway's forward proxy. Only when
+ * the WebView can't override proxies does it fall back to the localhost URL.
+ */
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WebScreen(url: String, title: String, onBack: () -> Unit) {
     val app = TaildeckApp.instance
     val context = LocalContext.current
-    val localUrl = remember(url) { runCatching { app.tailscale.localUrl(url) } }
+    var startUrl by remember { mutableStateOf<Result<String>?>(null) }
+    var sslPrompt by remember { mutableStateOf<SslPrompt?>(null) }
+    LaunchedEffect(url) {
+        startUrl = if (app.tailscale.ensureWebProxy()) Result.success(url) else runCatching { app.tailscale.localUrl(url) }
+    }
     var pageTitle by remember { mutableStateOf(title) }
     var progress by remember { mutableStateOf(0) }
     var canGoBack by remember { mutableStateOf(false) }
@@ -115,8 +129,8 @@ fun WebScreen(url: String, title: String, onBack: () -> Unit) {
         },
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
-            localUrl.onFailure { Text(it.message ?: "", Modifier.padding(24.dp)) }
-            localUrl.onSuccess { start ->
+            startUrl?.onFailure { Text(it.message ?: "", Modifier.padding(24.dp)) }
+            startUrl?.onSuccess { start ->
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
@@ -152,6 +166,11 @@ fun WebScreen(url: String, title: String, onBack: () -> Unit) {
                                 override fun onReceivedHttpAuthRequest(view: WebView, handler: HttpAuthHandler, host: String, realm: String) {
                                     authPrompt = AuthPrompt(host, handler)
                                 }
+
+                                override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
+                                    val host = runCatching { java.net.URI(error.url).host }.getOrNull() ?: error.url
+                                    if (host in trustedHosts) handler.proceed() else sslPrompt = SslPrompt(host, handler)
+                                }
                             }
                             webChromeClient = object : WebChromeClient() {
                                 override fun onProgressChanged(view: WebView, newProgress: Int) {
@@ -184,6 +203,22 @@ fun WebScreen(url: String, title: String, onBack: () -> Unit) {
                 )
             }
         }
+    }
+
+    sslPrompt?.let { p ->
+        AlertDialog(
+            onDismissRequest = { p.handler.cancel(); sslPrompt = null },
+            title = { Text(stringResource(R.string.web_cert_title)) },
+            text = { Text(stringResource(R.string.web_cert_body, p.host)) },
+            confirmButton = {
+                TextButton(onClick = { trustedHosts += p.host; p.handler.proceed(); sslPrompt = null }) {
+                    Text(stringResource(R.string.web_continue))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { p.handler.cancel(); sslPrompt = null }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
     }
 
     authPrompt?.let { p ->

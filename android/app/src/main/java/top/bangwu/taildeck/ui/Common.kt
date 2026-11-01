@@ -86,3 +86,8 @@ fun Context.openInBrowser(tailnetUrl: String) {
 fun Context.copyBrowserLink(tailnetUrl: String) {
     runCatching { TaildeckApp.instance.tailscale.localUrl(tailnetUrl) }.onSuccess(::copy)
 }
+
+/** Opens a service the way the user chose in settings. */
+fun Context.openService(url: String, title: String, openInApp: (String, String) -> Unit) {
+    if (TaildeckApp.instance.store.openInApp) openInApp(url, title) else openInBrowser(url)
+}

@@ -24,6 +24,10 @@ class Store(context: Context) {
         get() = prefs.getString("controlUrl", "") ?: ""
         set(v) = prefs.edit().putString("controlUrl", v).apply()
 
+    var openInApp: Boolean
+        get() = prefs.getBoolean("openInApp", true)
+        set(v) = prefs.edit().putBoolean("openInApp", v).apply()
+
     var gatewayPort: Int
         get() = prefs.getInt("gatewayPort", DEFAULT_GATEWAY_PORT)
         set(v) = prefs.edit().putInt("gatewayPort", v).apply()

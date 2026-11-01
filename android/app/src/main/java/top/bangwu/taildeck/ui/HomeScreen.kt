@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
@@ -255,13 +256,18 @@ private fun ServicesTab(padding: PaddingValues, services: List<Service>, peers: 
                                 onClick = { menu = false; onOpenInApp(svc) },
                             )
                             DropdownMenuItem(
+                                text = { Text(stringResource(R.string.open_in_browser)) },
+                                leadingIcon = { Icon(Icons.Outlined.Language, null) },
+                                onClick = { menu = false; context.openInBrowser(svc.url) },
+                            )
+                            DropdownMenuItem(
                                 text = { Text(stringResource(R.string.copy_link)) },
                                 leadingIcon = { Icon(Icons.Outlined.Link, null) },
                                 onClick = { menu = false; context.copyBrowserLink(svc.url) },
                             )
                         }
                     },
-                    modifier = Modifier.clickable { context.openInBrowser(svc.url) },
+                    modifier = Modifier.clickable { context.openService(svc.url, svc.name) { _, _ -> onOpenInApp(svc) } },
                 )
             }
         }

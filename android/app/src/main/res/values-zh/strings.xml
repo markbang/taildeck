@@ -114,4 +114,11 @@
     <string name="delete_key_confirm">删除密钥“%1$s”？</string>
     <string name="ssh_choose_key">密钥</string>
     <string name="file_too_large">文件太大</string>
+    <string name="open_in_browser">在浏览器打开</string>
+    <string name="open_services_in_app">在 App 内打开服务</string>
+    <string name="open_in_app_desc">直接使用 节点:端口 地址，登录状态保存在 App 内</string>
+    <string name="open_in_browser_desc">经 localhost 网关用默认浏览器打开，登录状态与浏览器共用</string>
+    <string name="web_cert_title">证书不受信任</string>
+    <string name="web_cert_body">%1$s 的证书不受本机信任，自签名服务常见这种情况。仍要继续吗？</string>
+    <string name="web_continue">继续</string>
 </resources>

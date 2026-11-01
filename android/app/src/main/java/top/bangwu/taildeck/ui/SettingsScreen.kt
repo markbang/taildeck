@@ -18,6 +18,7 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.VpnKeyOff
 import androidx.compose.material3.AlertDialog
@@ -30,6 +31,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -138,6 +140,15 @@ fun SettingsScreen(onBack: () -> Unit, onLogs: () -> Unit, onLoggedOut: () -> Un
             )
             HorizontalDivider()
 
+            var openInApp by remember { mutableStateOf(app.store.openInApp) }
+            ListItem(
+                leadingContent = { Icon(Icons.Outlined.Language, null) },
+                headlineContent = { Text(stringResource(R.string.open_services_in_app)) },
+                supportingContent = { Text(stringResource(if (openInApp) R.string.open_in_app_desc else R.string.open_in_browser_desc)) },
+                trailingContent = { Switch(openInApp, { openInApp = it; app.store.openInApp = it }) },
+                modifier = Modifier.clickable { openInApp = !openInApp; app.store.openInApp = openInApp },
+            )
+            HorizontalDivider()
             ListItem(
                 leadingContent = { Icon(Icons.Outlined.Description, null) },
                 headlineContent = { Text(stringResource(R.string.logs)) },

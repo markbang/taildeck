@@ -110,7 +110,7 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
                         Spacer(Modifier.width(6.dp))
                         Text(stringResource(R.string.ssh))
                     }
-                    FilledTonalButton(onClick = { context.openInBrowser("http://$name/") }, modifier = Modifier.weight(1f)) {
+                    FilledTonalButton(onClick = { context.openService("http://$name/", name, onOpenInApp) }, modifier = Modifier.weight(1f)) {
                         Icon(Icons.Outlined.Language, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(stringResource(R.string.open_web))
@@ -212,8 +212,9 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
             items(services, key = { it.id }) { svc ->
                 ServiceRow(
                     svc,
-                    onOpen = { context.openInBrowser(svc.url) },
+                    onOpen = { context.openService(svc.url, svc.name, onOpenInApp) },
                     onOpenInApp = { onOpenInApp(svc.url, svc.name) },
+                    onOpenInBrowser = { context.openInBrowser(svc.url) },
                     onCopyLink = { context.copyBrowserLink(svc.url) },
                     onEdit = { draft = draftOf(svc) },
                     onDelete = { app.store.deleteService(svc.id) },
@@ -302,6 +303,7 @@ private fun ServiceRow(
     svc: Service,
     onOpen: () -> Unit,
     onOpenInApp: () -> Unit,
+    onOpenInBrowser: () -> Unit,
     onCopyLink: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -314,6 +316,7 @@ private fun ServiceRow(
             IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
             DropdownMenu(menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text(stringResource(R.string.open_in_app)) }, onClick = { menu = false; onOpenInApp() })
+                DropdownMenuItem(text = { Text(stringResource(R.string.open_in_browser)) }, onClick = { menu = false; onOpenInBrowser() })
                 DropdownMenuItem(text = { Text(stringResource(R.string.copy_link)) }, onClick = { menu = false; onCopyLink() })
                 DropdownMenuItem(text = { Text(stringResource(R.string.edit)) }, onClick = { menu = false; onEdit() })
                 DropdownMenuItem(text = { Text(stringResource(R.string.delete)) }, onClick = { menu = false; onDelete() })

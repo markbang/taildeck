@@ -1,13 +1,8 @@
 package top.bangwu.taildeck.ui
 
-import android.annotation.SuppressLint
 import android.os.Handler
 import android.os.Looper
-import android.util.Base64
-import android.view.inputmethod.InputMethodManager
-import android.webkit.JavascriptInterface
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.view.KeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -63,10 +58,10 @@ import top.bangwu.taildeck.SshAuth
 import top.bangwu.taildeck.SshKeys
 import top.bangwu.taildeck.SshProfile
 import top.bangwu.taildeck.TaildeckApp
+import top.bangwu.taildeck.term.TerminalView
 import top.bangwu.taildeck.tsbridge.SSHListener
 import top.bangwu.taildeck.tsbridge.SSHSession
 import top.bangwu.taildeck.tsbridge.Tsbridge
-import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
 private sealed interface Conn {
@@ -76,52 +71,38 @@ private sealed interface Conn {
     data class Closed(val reason: String) : Conn
 }
 
-// Bridges xterm.js in a WebView to a Go SSH session. Output is coalesced per
-// frame because evaluateJavascript per chunk is slow on bulk output.
-private class TerminalController(private val keys: SshKeys) {
-    var webView: WebView? = null
-    var session: SSHSession? = null
-    var cols = 80
-    var rows = 24
-    var ready = false
-    var onReady: () -> Unit = {}
+// Owns the SSH session for one screen and pipes bytes between it and the
+// Ghostty-backed TerminalView.
+private class SshController(private val keys: SshKeys) {
+    var view: TerminalView? = null
     var onState: (Conn) -> Unit = {}
-    var onCtrlConsumed: () -> Unit = {}
 
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
-    private val pending = ByteArrayOutputStream()
-    private var flushScheduled = false
+    @Volatile private var session: SSHSession? = null
 
-    fun write(bytes: ByteArray) {
-        synchronized(pending) {
-            pending.write(bytes)
-            if (flushScheduled) return
-            flushScheduled = true
-        }
-        main.postDelayed({
-            val data = synchronized(pending) {
-                flushScheduled = false
-                pending.toByteArray().also { pending.reset() }
-            }
-            if (data.isNotEmpty()) {
-                webView?.evaluateJavascript("termWrite('${Base64.encodeToString(data, Base64.NO_WRAP)}')", null)
-            }
-        }, 16)
+    fun feed(bytes: ByteArray) {
+        view?.feed(bytes)
     }
 
-    fun banner(text: String) = write("\u001b[2m$text\u001b[0m\r\n".toByteArray())
+    fun banner(text: String) = feed("\u001b[2m$text\u001b[0m\r\n".toByteArray())
 
     fun send(bytes: ByteArray) {
         val s = session ?: return
         io.execute { runCatching { s.write(bytes) } }
     }
 
+    fun resize(cols: Int, rows: Int) {
+        val s = session ?: return
+        io.execute { runCatching { s.resize(cols.toLong(), rows.toLong()) } }
+    }
+
     fun connect(host: String, profile: SshProfile) {
+        val v = view ?: return
         onState(Conn.Connecting)
         banner("ssh ${profile.user}@$host -p ${profile.port}")
         val listener = object : SSHListener {
-            override fun onData(data: ByteArray) = write(data)
+            override fun onData(data: ByteArray) = feed(data)
             override fun onClosed(reason: String) {
                 main.post {
                     session = null
@@ -129,6 +110,8 @@ private class TerminalController(private val keys: SshKeys) {
                 }
             }
         }
+        val cols = v.cols
+        val rows = v.rows
         io.execute {
             try {
                 val pass = if (profile.auth == SshAuth.PASSWORD) profile.password else ""
@@ -142,12 +125,10 @@ private class TerminalController(private val keys: SshKeys) {
                     key?.key.orEmpty(), key?.passphrase.orEmpty(), key?.cert.orEmpty(),
                     cols.toLong(), rows.toLong(), listener,
                 )
-                main.post {
-                    session = s
-                    onState(Conn.Connected)
-                }
+                session = s
+                main.post { onState(Conn.Connected) }
             } catch (e: Exception) {
-                write("\r\n\u001b[31m${e.message}\u001b[0m\r\n".toByteArray())
+                feed("\r\n\u001b[31m${e.message}\u001b[0m\r\n".toByteArray())
                 main.post { onState(Conn.Closed(e.message ?: "")) }
             }
         }
@@ -158,80 +139,47 @@ private class TerminalController(private val keys: SshKeys) {
         session = null
         io.execute { s?.close() }
         io.shutdown()
+        view?.close()
     }
-
-    @JavascriptInterface
-    fun ready(c: Int, r: Int) {
-        cols = c
-        rows = r
-        main.post {
-            ready = true
-            onReady()
-        }
-    }
-
-    @JavascriptInterface
-    fun input(data: String) = send(data.toByteArray(Charsets.UTF_8))
-
-    @JavascriptInterface
-    fun resize(c: Int, r: Int) {
-        cols = c
-        rows = r
-        val s = session ?: return
-        io.execute { runCatching { s.resize(c.toLong(), r.toLong()) } }
-    }
-
-    @JavascriptInterface
-    fun ctrlConsumed() = main.post { onCtrlConsumed() }.let { }
 }
 
 private val EXTRA_KEYS = listOf(
-    "Esc" to "\u001b", "Tab" to "\t", "↑" to "\u001b[A", "↓" to "\u001b[B", "←" to "\u001b[D", "→" to "\u001b[C",
-    "Home" to "\u001b[H", "End" to "\u001b[F", "|" to "|", "/" to "/", "-" to "-", "~" to "~",
+    "Esc" to KeyEvent.KEYCODE_ESCAPE, "Tab" to KeyEvent.KEYCODE_TAB,
+    "↑" to KeyEvent.KEYCODE_DPAD_UP, "↓" to KeyEvent.KEYCODE_DPAD_DOWN,
+    "←" to KeyEvent.KEYCODE_DPAD_LEFT, "→" to KeyEvent.KEYCODE_DPAD_RIGHT,
+    "Home" to KeyEvent.KEYCODE_MOVE_HOME, "End" to KeyEvent.KEYCODE_MOVE_END,
+    "PgUp" to KeyEvent.KEYCODE_PAGE_UP, "PgDn" to KeyEvent.KEYCODE_PAGE_DOWN,
 )
+private val EXTRA_CHARS = listOf("|", "/", "-", "~", "_", ":")
 
-@SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TerminalScreen(node: String, onBack: () -> Unit) {
     val app = TaildeckApp.instance
-    val context = LocalContext.current
     val saved = remember { app.store.sshProfile(node) }
-    val controller = remember { TerminalController(app.keys) }
+    val controller = remember { SshController(app.keys) }
     var conn by remember { mutableStateOf<Conn>(Conn.Idle) }
     var profile by remember { mutableStateOf(saved?.takeIf { it.auth != SshAuth.PASSWORD || it.password.isNotEmpty() }) }
     var showDialog by remember { mutableStateOf(profile == null) }
     var ctrl by remember { mutableStateOf(false) }
-    var termReady by remember { mutableStateOf(false) }
+    var alt by remember { mutableStateOf(false) }
+    var title by remember { mutableStateOf<String?>(null) }
+    var viewReady by remember { mutableStateOf(false) }
     var attempt by remember { mutableIntStateOf(if (profile != null) 1 else 0) }
 
     controller.onState = { conn = it }
-    controller.onReady = { termReady = true }
-    controller.onCtrlConsumed = { ctrl = false }
 
-    LaunchedEffect(termReady, attempt) {
+    LaunchedEffect(viewReady, attempt) {
         val p = profile
-        if (termReady && attempt > 0 && p != null) controller.connect(node, p)
+        if (viewReady && attempt > 0 && p != null) controller.connect(node, p)
     }
-    DisposableEffect(Unit) {
-        onDispose {
-            controller.close()
-            controller.webView?.destroy()
-        }
-    }
+    DisposableEffect(Unit) { onDispose { controller.close() } }
 
-    fun showKeyboard() {
-        val wv = controller.webView ?: return
-        wv.requestFocus()
-        wv.evaluateJavascript("focusTerm()", null)
-        context.getSystemService(InputMethodManager::class.java).showSoftInput(wv, InputMethodManager.SHOW_IMPLICIT)
-    }
-
-    Column(Modifier.fillMaxSize().background(Color(0xFF0F1113)).imePadding()) {
+    Column(Modifier.fillMaxSize().background(Color(TerminalView.BG)).imePadding()) {
         TopAppBar(
             title = {
                 Column {
-                    Text(node, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(title?.ifBlank { null } ?: node, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     val sub = when (val c = conn) {
                         Conn.Connecting -> stringResource(R.string.ssh_connecting, node)
                         is Conn.Closed -> stringResource(R.string.ssh_closed) + (if (c.reason.isNotEmpty()) " · ${c.reason}" else "")
@@ -245,19 +193,19 @@ fun TerminalScreen(node: String, onBack: () -> Unit) {
                 if (conn is Conn.Closed) {
                     TextButton(onClick = { showDialog = true }) { Text(stringResource(R.string.reconnect)) }
                 }
-                IconButton(onClick = ::showKeyboard) { Icon(Icons.Outlined.Keyboard, stringResource(R.string.keyboard)) }
+                IconButton(onClick = { controller.view?.showKeyboard() }) { Icon(Icons.Outlined.Keyboard, stringResource(R.string.keyboard)) }
             },
         )
         AndroidView(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             factory = { ctx ->
-                WebView(ctx).apply {
-                    setBackgroundColor(0xFF0F1113.toInt())
-                    settings.javaScriptEnabled = true
-                    webViewClient = WebViewClient()
-                    addJavascriptInterface(controller, "Native")
-                    loadUrl("file:///android_asset/term/index.html")
-                    controller.webView = this
+                TerminalView(ctx).apply {
+                    onSend = controller::send
+                    onResize = { c, r -> controller.resize(c, r) }
+                    onTitle = { t -> post { title = t } }
+                    onModifiersConsumed = { post { ctrl = false; alt = false } }
+                    controller.view = this
+                    viewReady = true
                 }
             },
         )
@@ -268,18 +216,21 @@ fun TerminalScreen(node: String, onBack: () -> Unit) {
             ) {
                 FilterChip(
                     selected = ctrl,
-                    onClick = {
-                        ctrl = !ctrl
-                        controller.webView?.evaluateJavascript("armCtrl($ctrl)", null)
-                        if (ctrl) showKeyboard()
-                    },
+                    onClick = { ctrl = !ctrl; controller.view?.ctrlArmed = ctrl },
                     label = { Text("Ctrl", fontFamily = FontFamily.Monospace) },
                     modifier = Modifier.padding(horizontal = 2.dp),
                 )
-                EXTRA_KEYS.forEach { (label, seq) ->
-                    TextButton(onClick = { controller.send(seq.toByteArray()) }) {
-                        Text(label, fontFamily = FontFamily.Monospace)
-                    }
+                FilterChip(
+                    selected = alt,
+                    onClick = { alt = !alt; controller.view?.altArmed = alt },
+                    label = { Text("Alt", fontFamily = FontFamily.Monospace) },
+                    modifier = Modifier.padding(horizontal = 2.dp),
+                )
+                EXTRA_KEYS.forEach { (label, code) ->
+                    TextButton(onClick = { controller.view?.sendKey(code) }) { Text(label, fontFamily = FontFamily.Monospace) }
+                }
+                EXTRA_CHARS.forEach { ch ->
+                    TextButton(onClick = { controller.view?.sendText(ch) }) { Text(ch, fontFamily = FontFamily.Monospace) }
                 }
             }
         }

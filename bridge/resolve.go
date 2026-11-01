@@ -12,9 +12,10 @@ import (
 )
 
 type peerNames struct {
-	mu      sync.Mutex
-	updated time.Time
-	byName  map[string]string
+	mu       sync.Mutex
+	updated  time.Time
+	byName   map[string]string
+	prefixes []netip.Prefix // peer addresses and approved subnet routes
 }
 
 // resolveHost maps a bare peer name ("nas") or MagicDNS name to its tailnet
@@ -26,13 +27,30 @@ func (e *engine) resolveHost(host string) string {
 	}
 	e.names.mu.Lock()
 	defer e.names.mu.Unlock()
+	e.refreshNamesLocked()
+	if ip, ok := e.names.byName[key]; ok {
+		return ip
+	}
+	return host
+}
+
+func (e *engine) refreshNamesLocked() {
 	if time.Since(e.names.updated) > 10*time.Second || e.names.byName == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		st, err := e.lc.Status(ctx)
 		cancel()
 		if err == nil {
 			m := map[string]string{}
+			var prefixes []netip.Prefix
 			for _, p := range st.Peer {
+				if p.AllowedIPs != nil {
+					for _, pfx := range p.AllowedIPs.All() {
+						// Skip exit-node default routes; only tailnet-specific space counts.
+						if pfx.Bits() > 0 {
+							prefixes = append(prefixes, pfx)
+						}
+					}
+				}
 				if len(p.TailscaleIPs) == 0 {
 					continue
 				}
@@ -51,13 +69,61 @@ func (e *engine) resolveHost(host string) string {
 				}
 			}
 			e.names.byName = m
+			e.names.prefixes = prefixes
 			e.names.updated = time.Now()
 		}
 	}
-	if ip, ok := e.names.byName[key]; ok {
-		return ip
+}
+
+func (e *engine) inTailnet(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	e.names.mu.Lock()
+	defer e.names.mu.Unlock()
+	e.refreshNamesLocked()
+	for _, p := range e.names.prefixes {
+		if p.Contains(ip) {
+			return true
+		}
 	}
-	return host
+	return false
+}
+
+// dialAny sends tailnet destinations (peer names, MagicDNS names, peer IPs
+// and subnet routes) through the embedded node and everything else straight
+// to the physical network, so pages can still load public CDNs and APIs.
+func (e *engine) dialAny(ctx context.Context, hostport string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	resolved := e.resolveHost(host)
+	if ip, err := netip.ParseAddr(strings.Trim(resolved, "[]")); err == nil {
+		if e.inTailnet(ip) {
+			return e.srv.Dial(ctx, "tcp", net.JoinHostPort(ip.String(), port))
+		}
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), port))
+	}
+	addrs, err := platformLookup(e.platform, host)
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for _, ip := range addrs {
+		var c net.Conn
+		if e.inTailnet(ip) {
+			c, lastErr = e.srv.Dial(ctx, "tcp", net.JoinHostPort(ip.String(), port))
+		} else {
+			var d net.Dialer
+			c, lastErr = d.DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), port))
+		}
+		if lastErr == nil {
+			return c, nil
+		}
+	}
+	return nil, lastErr
 }
 
 func (e *engine) resolveHostPort(hostport string) string {
