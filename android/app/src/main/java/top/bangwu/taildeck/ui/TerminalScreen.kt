@@ -44,6 +44,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -77,6 +78,7 @@ private sealed interface Conn {
 private class SshController(private val keys: SshKeys, private val res: android.content.res.Resources) {
     var view: TerminalView? = null
     var onState: (Conn) -> Unit = {}
+    var onNeedSettings: () -> Unit = {}
 
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
@@ -124,7 +126,10 @@ private class SshController(private val keys: SshKeys, private val res: android.
             try {
                 val pass = if (profile.auth == SshAuth.PASSWORD) profile.password else ""
                 val key = if (profile.auth == SshAuth.KEY) {
-                    keys.paths(profile.keyId) ?: throw IllegalStateException("SSH key not found; pick another key")
+                    keys.paths(profile.keyId) ?: run {
+                        main.post { if (gen == generation) onNeedSettings() }
+                        throw IllegalStateException("SSH key not found; pick another key")
+                    }
                 } else {
                     null
                 }
@@ -225,6 +230,7 @@ fun TerminalScreen(node: String, onBack: () -> Unit) {
     var attempt by remember { mutableIntStateOf(if (profile != null) 1 else 0) }
 
     controller.onState = { conn = it }
+    controller.onNeedSettings = { showDialog = true }
 
     LaunchedEffect(viewReady, attempt) {
         val p = profile
@@ -255,7 +261,7 @@ fun TerminalScreen(node: String, onBack: () -> Unit) {
             },
         )
         AndroidView(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
+            modifier = Modifier.weight(1f).fillMaxWidth().clipToBounds(),
             factory = { ctx ->
                 TerminalView(ctx).apply {
                     onSend = controller::send

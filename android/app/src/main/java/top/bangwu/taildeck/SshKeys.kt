@@ -51,8 +51,12 @@ class SshKeys(context: Context, private val store: Store) {
     }
 
     fun paths(id: String): KeyPaths? {
+        // The built-in key is listed lazily, but its file is all a connection needs.
+        if (id == SshIdentity.BUILTIN) {
+            Tsbridge.ensureKey(builtinPath.absolutePath, "taildeck")
+            return KeyPaths(builtinPath.absolutePath, "", "")
+        }
         val identity = _list.value.firstOrNull { it.id == id } ?: return null
-        if (identity.builtin) return KeyPaths(builtinPath.absolutePath, "", "")
         val keyDir = File(dir, id)
         val cert = File(keyDir, "cert.pub")
         return KeyPaths(File(keyDir, "key").absolutePath, identity.passphrase, if (cert.exists()) cert.absolutePath else "")

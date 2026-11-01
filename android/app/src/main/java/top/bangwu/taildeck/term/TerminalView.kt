@@ -407,7 +407,11 @@ class TerminalView(context: Context) : View(context) {
         if (c == 0 || r == 0) return
         val defFg = meta[6]
         val defBg = meta[7]
-        canvas.drawColor(defBg)
+        // Compose doesn't clip hosted views, and drawColor would paint over
+        // the app bar; keep every draw inside this view's bounds.
+        canvas.clipRect(0, 0, width, height)
+        fill.color = defBg
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fill)
         if (meta[12] != 0) GhosttyNative.title(handle)?.let { onTitle(String(it, Charsets.UTF_8)) }
 
         val multi = if (extraLen > 0) parseExtra(extraLen) else null
