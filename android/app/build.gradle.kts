@@ -1,22 +1,42 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Release signing lives outside the repo; see keystore.properties.example.
+val signing = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use(::load)
+}
+
 android {
     namespace = "top.bangwu.taildeck"
     compileSdk = 36
+    buildToolsVersion = "36.0.0"
     ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "top.bangwu.taildeck"
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.2.0"
+        versionCode = 12
+        versionName = "0.2.1"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+    }
+
+    signingConfigs {
+        if (signing.getProperty("storeFile") != null) {
+            create("release") {
+                storeFile = file(signing.getProperty("storeFile"))
+                storePassword = signing.getProperty("storePassword")
+                keyAlias = signing.getProperty("keyAlias")
+                keyPassword = signing.getProperty("keyPassword")
+            }
         }
     }
 
@@ -25,8 +45,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Debug-signed so the release APK installs without extra setup; replace for distribution.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 
@@ -77,3 +96,29 @@ dependencies {
     implementation("androidx.browser:browser:1.9.0")
     implementation("androidx.webkit:webkit:1.14.0")
 }
+
+// Installs signed by the old key upgrade in place: re-sign with the old key
+// for v1/v2 plus the new key and rotation proof for v3 (Android 9+).
+val rotateReleaseSignature by tasks.registering(Exec::class) {
+    val lineage = signing.getProperty("lineageFile")
+    onlyIf { lineage != null && file(lineage).exists() }
+    val apk = layout.buildDirectory.file("outputs/apk/release/app-release.apk")
+    val apksigner = android.sdkDirectory.resolve("build-tools/${android.buildToolsVersion}/apksigner")
+    commandLine(
+        apksigner, "sign",
+        "--ks", signing.getProperty("legacyStoreFile").orEmpty(),
+        "--ks-key-alias", signing.getProperty("legacyKeyAlias").orEmpty(),
+        "--ks-pass", "pass:" + signing.getProperty("legacyStorePassword").orEmpty(),
+        "--key-pass", "pass:" + signing.getProperty("legacyKeyPassword").orEmpty(),
+        "--next-signer",
+        "--ks", signing.getProperty("storeFile").orEmpty(),
+        "--ks-key-alias", signing.getProperty("keyAlias").orEmpty(),
+        "--ks-pass", "pass:" + signing.getProperty("storePassword").orEmpty(),
+        "--key-pass", "pass:" + signing.getProperty("keyPassword").orEmpty(),
+        "--lineage", lineage.orEmpty(),
+        "--rotation-min-sdk-version", "28",
+        apk.get().asFile.absolutePath,
+    )
+}
+
+tasks.matching { it.name == "assembleRelease" }.configureEach { finalizedBy(rotateReleaseSignature) }
