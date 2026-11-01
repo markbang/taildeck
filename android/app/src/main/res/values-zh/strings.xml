@@ -135,4 +135,14 @@
     <string name="ssh_hint_from_restriction">• 公钥那一行带 from=\"…\" 限制，或 sshd_config 里有 Match Address / AllowUsers 时，来自 Tailnet 地址（100.x）的连接会被拒</string>
     <string name="ssh_hint_server_log">• 节点日志会写明具体原因：journalctl -u ssh -n 20</string>
     <string name="ssh_settings">连接设置</string>
+    <string name="web_downloading">正在下载 %1$s…</string>
+    <string name="web_downloaded">已保存到「下载」：%1$s</string>
+    <string name="web_download_failed">下载失败：%1$s</string>
+    <string name="web_open_file">打开</string>
+    <string name="web_no_app">没有可以打开此链接的应用</string>
+    <string name="web_copy_link">复制链接</string>
+    <string name="web_share">分享</string>
+    <string name="web_save_image">下载图片</string>
+    <string name="web_open_app_title">打开外部应用？</string>
+    <string name="web_open">打开</string>
 </resources>

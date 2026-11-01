@@ -137,4 +137,14 @@
     <string name="ssh_hint_from_restriction">• A from=\"…\" option on the key line, or Match Address / AllowUsers in sshd_config, rejects connections from tailnet addresses (100.x)</string>
     <string name="ssh_hint_server_log">• The node\'s log states the exact reason: journalctl -u ssh -n 20</string>
     <string name="ssh_settings">Connection settings</string>
+    <string name="web_downloading">Downloading %1$s…</string>
+    <string name="web_downloaded">Saved to Downloads: %1$s</string>
+    <string name="web_download_failed">Download failed: %1$s</string>
+    <string name="web_open_file">Open</string>
+    <string name="web_no_app">No app can open this link</string>
+    <string name="web_copy_link">Copy link</string>
+    <string name="web_share">Share</string>
+    <string name="web_save_image">Download image</string>
+    <string name="web_open_app_title">Open in another app?</string>
+    <string name="web_open">Open</string>
 </resources>

@@ -68,11 +68,17 @@ fun osLabel(os: String): String = when (os.lowercase()) {
     else -> os
 }
 
-/** Opens a tailnet URL in the default browser through the loopback gateway. */
-fun Context.openInBrowser(tailnetUrl: String) {
-    val url = runCatching { TaildeckApp.instance.tailscale.localUrl(tailnetUrl) }.getOrElse {
-        Toast.makeText(this, it.message, Toast.LENGTH_SHORT).show()
-        return
+/** Opens a URL in the default browser; tailnet URLs go through the loopback gateway. */
+fun Context.openInBrowser(target: String) {
+    val ts = TaildeckApp.instance.tailscale
+    val host = runCatching { Uri.parse(target).host }.getOrNull().orEmpty()
+    val url = if (ts.isTailnetHost(host) || !host.contains('.')) {
+        runCatching { ts.localUrl(target) }.getOrElse {
+            Toast.makeText(this, it.message, Toast.LENGTH_SHORT).show()
+            return
+        }
+    } else {
+        target
     }
     val uri = Uri.parse(url)
     try {

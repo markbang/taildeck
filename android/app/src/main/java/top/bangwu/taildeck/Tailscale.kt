@@ -168,6 +168,35 @@ class Tailscale(private val context: Context, private val store: Store) {
 
     fun logs(): String = Tsbridge.logs()
 
+    /** True for peer names, MagicDNS names and tailnet addresses (incl. approved subnet routes). */
+    fun isTailnetHost(host: String): Boolean {
+        val h = host.lowercase().trim('[', ']').trimEnd('.')
+        if (h.isEmpty()) return false
+        val status = _state.value.status ?: return false
+        status.magicDnsSuffix?.let { if (h.endsWith(".${it.lowercase().trimEnd('.')}")) return true }
+        val addr = runCatching {
+            if (h.any { it == ':' } || h.all { it.isDigit() || it == '.' }) java.net.InetAddress.getByName(h) else null
+        }.getOrNull()
+        if (addr != null) {
+            val b = addr.address
+            if (b.size == 4 && b[0].toInt() and 0xFF == 100 && b[1].toInt() and 0xC0 == 64) return true
+            if (b.size == 16 && h.startsWith("fd7a:115c:a1e0")) return true
+            return status.peers.any { p -> p.routes.any { cidrContains(it, b) } }
+        }
+        return status.peers.any { p -> p.name.equals(h, true) || p.dnsName.equals(h, true) }
+    }
+
+    private fun cidrContains(cidr: String, ip: ByteArray): Boolean {
+        val net = runCatching { java.net.InetAddress.getByName(cidr.substringBefore('/')).address }.getOrNull() ?: return false
+        val bits = cidr.substringAfter('/', "").toIntOrNull() ?: return false
+        if (net.size != ip.size || bits == 0) return false
+        for (i in 0 until bits) {
+            val mask = 0x80 ushr (i % 8)
+            if ((net[i / 8].toInt() and mask) != (ip[i / 8].toInt() and mask)) return false
+        }
+        return true
+    }
+
     /** Maps a tailnet URL to the loopback gateway URL any browser can open. */
     fun localUrl(url: String): String = Tsbridge.localURL(url)
 
