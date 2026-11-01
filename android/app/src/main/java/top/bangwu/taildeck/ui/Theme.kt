@@ -43,3 +43,10 @@ fun TaildeckTheme(content: @Composable () -> Unit) {
     }
     MaterialTheme(colorScheme = scheme, content = content)
 }
+
+/** Shared motion tokens (Material 3 emphasized easing). */
+object Motion {
+    private val emphasized = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0f, 1f)
+    fun <T> slow() = androidx.compose.animation.core.tween<T>(350, easing = emphasized)
+    fun <T> fast() = androidx.compose.animation.core.tween<T>(200, easing = emphasized)
+}

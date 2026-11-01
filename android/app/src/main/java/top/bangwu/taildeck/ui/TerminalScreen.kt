@@ -1,5 +1,11 @@
 package top.bangwu.taildeck.ui
 
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
 import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
@@ -250,12 +256,14 @@ fun TerminalScreen(node: String, onBack: () -> Unit) {
                         is Conn.Closed -> stringResource(R.string.ssh_closed) + (if (c.reason.isNotEmpty()) " · ${c.reason}" else "")
                         else -> profile?.let { "${it.user}@$node:${it.port}" } ?: ""
                     }
-                    Text(sub, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    AnimatedContent(sub, transitionSpec = { fadeIn(Motion.slow()).togetherWith(fadeOut(Motion.fast())) }, label = "conn") {
+                        Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
             actions = {
-                if (conn is Conn.Closed) {
+                AnimatedVisibility(conn is Conn.Closed, enter = fadeIn() + scaleIn(initialScale = 0.8f), exit = fadeOut()) {
                     TextButton(onClick = { if (profile == null) showDialog = true else attempt++ }) { Text(stringResource(R.string.reconnect)) }
                 }
                 IconButton(onClick = { showDialog = true }) { Icon(Icons.Outlined.ManageAccounts, stringResource(R.string.ssh_settings)) }

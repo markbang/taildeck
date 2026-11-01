@@ -1,5 +1,11 @@
 package top.bangwu.taildeck.ui
 
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.AnimatedContent
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
@@ -131,32 +137,48 @@ fun LoginScreen(onReady: () -> Unit) {
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
 
-        if (!busy) {
-            Button(
-                onClick = {
-                    app.store.hostname = hostname.trim('-')
-                    app.store.controlUrl = controlUrl
-                    app.tailscale.start(authKey)
-                },
-                enabled = hostname.isNotBlank(),
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-            ) { Text(if (state.phase == Phase.ERROR) stringResource(R.string.retry) else stringResource(R.string.sign_in)) }
-        } else {
-            val url = state.authUrl
-            if (url != null) {
-                Text(stringResource(R.string.waiting_login), style = MaterialTheme.typography.bodyMedium)
-                Button(onClick = { openUrl(url) }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                    Text(stringResource(R.string.open_login))
+        val stage = when {
+            !busy -> 0
+            state.authUrl != null -> 2
+            else -> 1
+        }
+        AnimatedContent(
+            targetState = stage,
+            transitionSpec = {
+                (fadeIn(Motion.slow()) + slideInVertically(Motion.slow()) { it / 6 })
+                    .togetherWith(fadeOut(Motion.fast()))
+                    .using(SizeTransform(clip = false))
+            },
+            label = "login",
+        ) { current ->
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                when (current) {
+                    0 -> Button(
+                        onClick = {
+                            app.store.hostname = hostname.trim('-')
+                            app.store.controlUrl = controlUrl
+                            app.tailscale.start(authKey)
+                        },
+                        enabled = hostname.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                    ) { Text(if (state.phase == Phase.ERROR) stringResource(R.string.retry) else stringResource(R.string.sign_in)) }
+                    2 -> {
+                        Text(stringResource(R.string.waiting_login), style = MaterialTheme.typography.bodyMedium)
+                        Button(onClick = { state.authUrl?.let(::openUrl) }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                            Text(stringResource(R.string.open_login))
+                        }
+                    }
+                    else -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.size(12.dp))
+                        Text(stringResource(R.string.starting))
+                    }
                 }
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.size(12.dp))
-                    Text(stringResource(R.string.starting))
+                if (current != 0) {
+                    OutlinedButton(onClick = { app.tailscale.stop() }, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.cancel))
+                    }
                 }
-            }
-            OutlinedButton(onClick = { app.tailscale.stop() }, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.cancel))
             }
         }
     }

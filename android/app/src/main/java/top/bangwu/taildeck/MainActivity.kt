@@ -5,6 +5,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -17,6 +22,7 @@ import androidx.navigation.navArgument
 import top.bangwu.taildeck.ui.HomeScreen
 import top.bangwu.taildeck.ui.LoginScreen
 import top.bangwu.taildeck.ui.LogsScreen
+import top.bangwu.taildeck.ui.Motion
 import top.bangwu.taildeck.ui.NodeScreen
 import top.bangwu.taildeck.ui.SettingsScreen
 import top.bangwu.taildeck.ui.TaildeckTheme
@@ -53,11 +59,30 @@ private fun AppNav() {
         }
     }
 
-    NavHost(nav, startDestination = start) {
-        composable("login") {
+    NavHost(
+        nav,
+        startDestination = start,
+        // Material shared-axis style: forward pushes in from the right,
+        // back (including predictive back) reverses it.
+        enterTransition = { slideInHorizontally(Motion.slow()) { it / 5 } + fadeIn(Motion.slow()) },
+        exitTransition = { slideOutHorizontally(Motion.slow()) { -it / 10 } + fadeOut(Motion.fast()) },
+        popEnterTransition = { slideInHorizontally(Motion.slow()) { -it / 10 } + fadeIn(Motion.slow()) },
+        popExitTransition = { slideOutHorizontally(Motion.slow()) { it / 5 } + fadeOut(Motion.fast()) },
+    ) {
+        composable(
+            "login",
+            enterTransition = { fadeIn(Motion.slow()) },
+            exitTransition = { fadeOut(Motion.fast()) },
+        ) {
             LoginScreen(onReady = { nav.navigate("home") { popUpTo(0) } })
         }
-        composable("home") {
+        composable(
+            "home",
+            enterTransition = {
+                if (initialState.destination.route == "login") fadeIn(Motion.slow()) + scaleIn(Motion.slow(), initialScale = 0.96f)
+                else slideInHorizontally(Motion.slow()) { it / 5 } + fadeIn(Motion.slow())
+            },
+        ) {
             HomeScreen(
                 onNode = { nav.navigate(Routes.node(it)) },
                 onOpenInApp = { nav.navigate(Routes.web(it.url, it.name)) },

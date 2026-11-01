@@ -18,6 +18,7 @@ import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.inputmethod.BaseInputConnection
+import android.view.inputmethod.CursorAnchorInfo
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
@@ -25,6 +26,7 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
+import kotlin.math.min
 
 /**
  * Draws a libghostty-vt terminal and turns touch, IME and hardware keys into
@@ -185,35 +187,39 @@ class TerminalView(context: Context) : View(context) {
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
         // No suggestions/autocorrect, but still a text field so CJK IMEs work.
         outAttrs.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-        outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN or EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_ACTION_NONE
+        outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN or EditorInfo.IME_FLAG_NO_EXTRACT_UI or
+            EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING or EditorInfo.IME_ACTION_NONE
+        outAttrs.initialSelStart = 0
+        outAttrs.initialSelEnd = 0
         return TermInputConnection()
     }
 
     private inner class TermInputConnection : BaseInputConnection(this, true) {
         override fun commitText(text: CharSequence, newCursorPosition: Int): Boolean {
-            composing = ""
+            setComposing("")
             editable?.clear()
             sendText(text.toString())
-            invalidate()
             return true
         }
 
         override fun setComposingText(text: CharSequence, newCursorPosition: Int): Boolean {
             super.setComposingText(text, newCursorPosition)
-            composing = text.toString()
-            invalidate()
+            setComposing(text.toString())
             return true
         }
 
         override fun finishComposingText(): Boolean {
             val text = composing
-            composing = ""
+            setComposing("")
             editable?.clear()
             super.finishComposingText()
             if (text.isNotEmpty()) sendText(text)
-            invalidate()
             return true
         }
+
+        // Committed text already lives on the remote; IMEs that try to
+        // re-compose it (Gboard, Samsung) get an empty region instead.
+        override fun setComposingRegion(start: Int, end: Int) = true
 
         override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
             if (composing.isEmpty() && editable.isNullOrEmpty()) {
@@ -223,10 +229,93 @@ class TerminalView(context: Context) : View(context) {
             return super.deleteSurroundingText(beforeLength, afterLength)
         }
 
+        override fun deleteSurroundingTextInCodePoints(beforeLength: Int, afterLength: Int) =
+            deleteSurroundingText(beforeLength, afterLength)
+
+        override fun performEditorAction(actionCode: Int): Boolean {
+            sendKey(KeyEvent.KEYCODE_ENTER)
+            return true
+        }
+
         override fun sendKeyEvent(event: KeyEvent): Boolean {
             if (event.action == KeyEvent.ACTION_DOWN) onKeyDown(event.keyCode, event)
             return true
         }
+
+        override fun requestCursorUpdates(cursorUpdateMode: Int): Boolean {
+            monitorCursor = cursorUpdateMode and InputConnection.CURSOR_UPDATE_MONITOR != 0
+            if (cursorUpdateMode and InputConnection.CURSOR_UPDATE_IMMEDIATE != 0) post { reportCursor(force = true) }
+            return true
+        }
+    }
+
+    private var monitorCursor = false
+    private var reportedCursor = ""
+
+    private fun setComposing(text: String) {
+        if (composing == text) return
+        composing = text
+        invalidate()
+        post { reportCursor() }
+    }
+
+    /** Cells each composing grapheme occupies, using Ghostty's width tables. */
+    private fun composingLayout(): List<Pair<String, Int>> {
+        val out = ArrayList<Pair<String, Int>>()
+        var i = 0
+        while (i < composing.length) {
+            val cp = composing.codePointAt(i)
+            val n = Character.charCount(cp)
+            val w = GhosttyNative.codepointWidth(cp)
+            if (w == 0 && out.isNotEmpty()) {
+                val (prev, pw) = out.removeAt(out.size - 1)
+                out += (prev + composing.substring(i, i + n)) to pw
+            } else {
+                out += composing.substring(i, i + n) to max(1, w)
+            }
+            i += n
+        }
+        return out
+    }
+
+    /** Left edge of the preedit, shifted so a long preedit stays on screen. */
+    private fun composingLeft(cells: Int): Float {
+        val start = meta[3] * cellW
+        return max(0f, min(start, width - cells * cellW))
+    }
+
+    /** Tells floating IMEs (candidate windows, handwriting) where the cursor is. */
+    private fun reportCursor(force: Boolean = false) {
+        if (closed || (!monitorCursor && !force)) return
+        val layout = composingLayout()
+        val cells = layout.sumOf { it.second }
+        val left = if (composing.isEmpty()) meta[3] * cellW else composingLeft(cells)
+        val top = (meta[4] * cellH).toFloat()
+        val key = "$left,$top,$composing"
+        if (!force && key == reportedCursor) return
+        reportedCursor = key
+        val loc = IntArray(2)
+        getLocationOnScreen(loc)
+        val matrix = android.graphics.Matrix().apply { setTranslate(loc[0].toFloat(), loc[1].toFloat()) }
+        val builder = CursorAnchorInfo.Builder()
+            .setMatrix(matrix)
+            .setSelectionRange(composing.length, composing.length)
+            .setInsertionMarkerLocation(
+                left + cells * cellW, top, top + baseline, top + cellH, CursorAnchorInfo.FLAG_HAS_VISIBLE_REGION,
+            )
+        if (composing.isNotEmpty()) {
+            builder.setComposingText(0, composing)
+            var x = left
+            var index = 0
+            for ((text, w) in layout) {
+                for (k in text.indices) {
+                    builder.addCharacterBounds(index + k, x, top, x + w * cellW, top + cellH, CursorAnchorInfo.FLAG_HAS_VISIBLE_REGION)
+                }
+                index += text.length
+                x += w * cellW
+            }
+        }
+        context.getSystemService(InputMethodManager::class.java).updateCursorAnchorInfo(this, builder.build())
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
@@ -506,6 +595,7 @@ class TerminalView(context: Context) : View(context) {
         }
         drawCursor(canvas, c, defFg, defBg)
         drawScrollbar(canvas)
+        if (monitorCursor) post { reportCursor() }
     }
 
     private fun handleEffects(effects: Int) {
@@ -578,13 +668,21 @@ class TerminalView(context: Context) : View(context) {
         if (composing.isNotEmpty()) {
             paint.isFakeBoldText = false
             paint.textSkewX = 0f
-            val w = paint.measureText(composing)
-            fill.color = defBg
-            canvas.drawRect(left, top, left + w, top + cellH, fill)
+            val layout = composingLayout()
+            val cells = layout.sumOf { it.second }
+            var x = composingLeft(cells)
+            fill.color = COMPOSING_BG
+            canvas.drawRect(x, top, x + cells * cellW, top + cellH, fill)
             paint.color = defFg
-            canvas.drawText(composing, left, top + baseline, paint)
+            for ((text, w) in layout) {
+                val glyph = paint.measureText(text)
+                canvas.drawText(text, x + max(0f, (w * cellW - glyph) / 2), top + baseline, paint)
+                x += w * cellW
+            }
             fill.color = CURSOR
-            canvas.drawRect(left, top + cellH - 2, left + w, top + cellH, fill)
+            val start = composingLeft(cells)
+            canvas.drawRect(start, top + cellH - 3, start + cells * cellW, top + cellH, fill)
+            canvas.drawRect(x, top, x + max(2f, cellW / 6), top + cellH, fill)
             return
         }
         if (meta[2] == 0) return
@@ -634,6 +732,7 @@ class TerminalView(context: Context) : View(context) {
         const val BG = 0xFF0F1113.toInt()
         const val CURSOR = 0xFF8FD3A8.toInt()
         private const val SELECTION_BG = 0xFF2C4A38.toInt()
+        private const val COMPOSING_BG = 0xFF22262A.toInt()
         private const val SELECTION_FG = 0xFFFFFFFF.toInt()
         private const val STYLE_MASK = GhosttyNative.F_BOLD or GhosttyNative.F_ITALIC or GhosttyNative.F_FAINT or
             GhosttyNative.F_UNDERLINE or GhosttyNative.F_STRIKE or GhosttyNative.F_INVERSE or GhosttyNative.F_SELECTED

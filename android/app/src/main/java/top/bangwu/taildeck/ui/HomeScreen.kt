@@ -1,5 +1,13 @@
 package top.bangwu.taildeck.ui
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
 import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -99,7 +107,9 @@ fun HomeScreen(onNode: (String) -> Unit, onOpenInApp: (Service) -> Unit, onSetti
                         IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, stringResource(R.string.settings)) }
                     },
                 )
-                if (state.phase != Phase.RUNNING) LinearProgressIndicator(Modifier.fillMaxWidth())
+                AnimatedVisibility(state.phase != Phase.RUNNING, enter = fadeIn(), exit = fadeOut()) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
             }
         },
         bottomBar = {
@@ -119,9 +129,19 @@ fun HomeScreen(onNode: (String) -> Unit, onOpenInApp: (Service) -> Unit, onSetti
             }
         },
     ) { padding ->
-        when (tab) {
-            0 -> NodesTab(padding, status?.self, status?.peers.orEmpty(), state.phase == Phase.RUNNING, services, onNode)
-            else -> ServicesTab(padding, services, status?.peers.orEmpty(), onOpenInApp)
+        AnimatedContent(
+            targetState = tab,
+            transitionSpec = {
+                val dir = if (targetState > initialState) 1 else -1
+                (slideInHorizontally(Motion.slow()) { dir * it / 8 } + fadeIn(Motion.slow()))
+                    .togetherWith(slideOutHorizontally(Motion.fast()) { -dir * it / 8 } + fadeOut(Motion.fast()))
+            },
+            label = "tab",
+        ) { current ->
+            when (current) {
+                0 -> NodesTab(padding, status?.self, status?.peers.orEmpty(), state.phase == Phase.RUNNING, services, onNode)
+                else -> ServicesTab(padding, services, status?.peers.orEmpty(), onOpenInApp)
+            }
         }
     }
 }
@@ -194,7 +214,9 @@ private fun NodesTab(
                 }
             }
             items(filtered, key = { it.id }) { node ->
-                NodeRow(node, services.count { it.node == node.name }) { onNode(node.name) }
+                Box(Modifier.animateItem()) {
+                    NodeRow(node, services.count { it.node == node.name }) { onNode(node.name) }
+                }
             }
         }
     }
@@ -245,6 +267,7 @@ private fun ServicesTab(padding: PaddingValues, services: List<Service>, peers: 
             items(list, key = { it.id }) { svc ->
                 var menu by remember { mutableStateOf(false) }
                 ListItem(
+                    modifier = Modifier.animateItem().clickable { context.openService(svc.url, svc.name) { _, _ -> onOpenInApp(svc) } },
                     headlineContent = { Text(svc.name) },
                     supportingContent = { Text(svc.url, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     trailingContent = {
@@ -267,7 +290,6 @@ private fun ServicesTab(padding: PaddingValues, services: List<Service>, peers: 
                             )
                         }
                     },
-                    modifier = Modifier.clickable { context.openService(svc.url, svc.name) { _, _ -> onOpenInApp(svc) } },
                 )
             }
         }

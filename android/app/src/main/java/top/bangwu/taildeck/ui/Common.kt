@@ -1,5 +1,7 @@
 package top.bangwu.taildeck.ui
 
+import androidx.compose.runtime.getValue
+import androidx.compose.animation.animateColorAsState
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ActivityNotFoundException
@@ -24,11 +26,12 @@ import java.time.OffsetDateTime
 
 @Composable
 fun StatusDot(online: Boolean, modifier: Modifier = Modifier) {
-    Box(
-        modifier
-            .size(8.dp)
-            .background(if (online) OnlineGreen else MaterialTheme.colorScheme.outlineVariant, CircleShape),
+    val color by animateColorAsState(
+        if (online) OnlineGreen else MaterialTheme.colorScheme.outlineVariant,
+        Motion.slow(),
+        label = "status",
     )
+    Box(modifier.size(8.dp).background(color, CircleShape))
 }
 
 fun Context.copy(text: String) {

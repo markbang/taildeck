@@ -1,5 +1,6 @@
 package top.bangwu.taildeck.ui
 
+import androidx.compose.animation.animateContentSize
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -78,7 +79,7 @@ fun SettingsScreen(onBack: () -> Unit, onLogs: () -> Unit, onLoggedOut: () -> Un
             )
         },
     ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState())) {
+        Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).animateContentSize(Motion.slow())) {
             SectionLabel(stringResource(R.string.account))
             ListItem(
                 headlineContent = { Text(status?.self?.user ?: "—") },

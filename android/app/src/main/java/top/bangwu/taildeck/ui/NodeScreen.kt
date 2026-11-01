@@ -1,5 +1,13 @@
 package top.bangwu.taildeck.ui
 
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -141,8 +149,10 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
                         Text(stringResource(R.string.ping))
                     }
                 }
-                ping?.let {
-                    Text(it, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                AnimatedVisibility(ping != null, enter = expandVertically(Motion.slow()) + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                    AnimatedContent(ping.orEmpty(), transitionSpec = { fadeIn(Motion.slow()).togetherWith(fadeOut(Motion.fast())) }, label = "ping") {
+                        Text(it, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                    }
                 }
             }
 
@@ -175,10 +185,10 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
             }
 
             scanResult?.let { ports ->
-                item {
+                item(key = "scan") {
                     val known = services.mapNotNull { portOf(it.url) }.toSet()
                     val fresh = ports.filterNot { it in known }
-                    Column(Modifier.padding(horizontal = 16.dp)) {
+                    Column(Modifier.animateItem().padding(horizontal = 16.dp).animateContentSize(Motion.slow())) {
                         if (ports.isEmpty()) {
                             Text(stringResource(R.string.scan_none), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         } else {
@@ -212,6 +222,7 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
             items(services, key = { it.id }) { svc ->
                 ServiceRow(
                     svc,
+                    modifier = Modifier.animateItem(),
                     onOpen = { context.openService(svc.url, svc.name, onOpenInApp) },
                     onOpenInApp = { onOpenInApp(svc.url, svc.name) },
                     onOpenInBrowser = { context.openInBrowser(svc.url) },
@@ -301,6 +312,7 @@ private fun InfoRow(label: String, content: @Composable () -> Unit) {
 @Composable
 private fun ServiceRow(
     svc: Service,
+    modifier: Modifier,
     onOpen: () -> Unit,
     onOpenInApp: () -> Unit,
     onOpenInBrowser: () -> Unit,
@@ -322,7 +334,7 @@ private fun ServiceRow(
                 DropdownMenuItem(text = { Text(stringResource(R.string.delete)) }, onClick = { menu = false; onDelete() })
             }
         },
-        modifier = Modifier.clickable(onClick = onOpen),
+        modifier = modifier.clickable(onClick = onOpen),
     )
 }
 

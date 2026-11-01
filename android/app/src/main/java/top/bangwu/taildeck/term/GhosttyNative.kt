@@ -50,4 +50,5 @@ object GhosttyNative {
     @JvmStatic external fun select(handle: Long, x0: Int, y0: Int, x1: Int, y1: Int)
     @JvmStatic external fun selectionText(handle: Long): ByteArray?
     @JvmStatic external fun title(handle: Long): ByteArray?
+    @JvmStatic external fun codepointWidth(cp: Int): Int
 }

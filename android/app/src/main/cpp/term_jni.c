@@ -551,3 +551,11 @@ JNIEXPORT jbyteArray JNICALL FN(title)(JNIEnv* env, jclass cls, jlong handle) {
   pthread_mutex_unlock(&t->mu);
   return s;
 }
+
+// Display width (0, 1 or 2 cells) per Ghostty's Unicode tables, so the IME
+// preedit lines up with how the terminal itself lays out text.
+JNIEXPORT jint JNICALL FN(codepointWidth)(JNIEnv* env, jclass cls, jint cp) {
+  (void)env;
+  (void)cls;
+  return (jint)ghostty_unicode_codepoint_width((uint32_t)cp);
+}
