@@ -134,4 +134,5 @@
     <string name="ssh_hint_dropbear_keys">• Dropbear（OpenWrt）的 root 公钥放在 /etc/dropbear/authorized_keys</string>
     <string name="ssh_hint_from_restriction">• 公钥那一行带 from=\"…\" 限制，或 sshd_config 里有 Match Address / AllowUsers 时，来自 Tailnet 地址（100.x）的连接会被拒</string>
     <string name="ssh_hint_server_log">• 节点日志会写明具体原因：journalctl -u ssh -n 20</string>
+    <string name="ssh_settings">连接设置</string>
 </resources>

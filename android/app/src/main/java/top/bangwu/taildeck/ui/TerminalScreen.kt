@@ -20,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Keyboard
+import androidx.compose.material.icons.outlined.ManageAccounts
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -80,6 +81,7 @@ private class SshController(private val keys: SshKeys, private val res: android.
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     @Volatile private var session: SSHSession? = null
+    private var generation = 0
 
     fun feed(bytes: ByteArray) {
         view?.feed(bytes)
@@ -99,12 +101,18 @@ private class SshController(private val keys: SshKeys, private val res: android.
 
     fun connect(host: String, profile: SshProfile) {
         val v = view ?: return
+        val gen = ++generation
+        session?.let { old ->
+            session = null
+            io.execute { old.close() }
+        }
         onState(Conn.Connecting)
         banner("ssh ${profile.user}@$host -p ${profile.port}")
         val listener = object : SSHListener {
             override fun onData(data: ByteArray) = feed(data)
             override fun onClosed(reason: String) {
                 main.post {
+                    if (gen != generation) return@post
                     session = null
                     onState(Conn.Closed(reason))
                 }
@@ -125,14 +133,20 @@ private class SshController(private val keys: SshKeys, private val res: android.
                     key?.key.orEmpty(), key?.passphrase.orEmpty(), key?.cert.orEmpty(),
                     cols.toLong(), rows.toLong(), listener,
                 )
-                session = s
-                main.post { onState(Conn.Connected) }
+                main.post {
+                    if (gen != generation) {
+                        io.execute { s.close() }
+                        return@post
+                    }
+                    session = s
+                    onState(Conn.Connected)
+                }
             } catch (e: Exception) {
                 feed("\r\n\u001b[31m${e.message}\u001b[0m\r\n".toByteArray())
                 if (e.message?.contains("unable to authenticate") == true) {
                     authHints(host, profile, e.message.orEmpty()).forEach { feed("\u001b[33m$it\u001b[0m\r\n".toByteArray()) }
                 }
-                main.post { onState(Conn.Closed(e.message ?: "")) }
+                main.post { if (gen == generation) onState(Conn.Closed(e.message ?: "")) }
             }
         }
     }
@@ -234,8 +248,9 @@ fun TerminalScreen(node: String, onBack: () -> Unit) {
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
             actions = {
                 if (conn is Conn.Closed) {
-                    TextButton(onClick = { showDialog = true }) { Text(stringResource(R.string.reconnect)) }
+                    TextButton(onClick = { if (profile == null) showDialog = true else attempt++ }) { Text(stringResource(R.string.reconnect)) }
                 }
+                IconButton(onClick = { showDialog = true }) { Icon(Icons.Outlined.ManageAccounts, stringResource(R.string.ssh_settings)) }
                 IconButton(onClick = { controller.view?.showKeyboard() }) { Icon(Icons.Outlined.Keyboard, stringResource(R.string.keyboard)) }
             },
         )
@@ -282,7 +297,7 @@ fun TerminalScreen(node: String, onBack: () -> Unit) {
     if (showDialog) {
         SshDialog(
             node = node,
-            initial = saved ?: SshProfile(),
+            initial = profile ?: saved ?: SshProfile(),
             onDismiss = {
                 showDialog = false
                 if (profile == null) onBack()

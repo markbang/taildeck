@@ -136,4 +136,5 @@
     <string name="ssh_hint_dropbear_keys">• Dropbear (OpenWrt) reads root\'s keys from /etc/dropbear/authorized_keys</string>
     <string name="ssh_hint_from_restriction">• A from=\"…\" option on the key line, or Match Address / AllowUsers in sshd_config, rejects connections from tailnet addresses (100.x)</string>
     <string name="ssh_hint_server_log">• The node\'s log states the exact reason: journalctl -u ssh -n 20</string>
+    <string name="ssh_settings">Connection settings</string>
 </resources>
