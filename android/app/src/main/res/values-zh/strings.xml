@@ -121,4 +121,12 @@
     <string name="web_cert_title">证书不受信任</string>
     <string name="web_cert_body">%1$s 的证书不受本机信任，自签名服务常见这种情况。仍要继续吗？</string>
     <string name="web_continue">继续</string>
+    <string name="ssh_auth_rejected">服务器拒绝了 %1$s@%2$s 的认证。</string>
+    <string name="ssh_auth_used_key">使用的公钥：%1$s %2$s</string>
+    <string name="ssh_hint_cert_principal">• 证书只对 [%1$s] 有效，不包含 %2$s</string>
+    <string name="ssh_hint_authorized_keys">• 把公钥加到节点的 ~%1$s/.ssh/authorized_keys（设置 → SSH 密钥 → 复制公钥）</string>
+    <string name="ssh_hint_root">• 以 root 登录时，sshd_config 可能设置了 PermitRootLogin no</string>
+    <string name="ssh_hint_try_tailscale">• 如果节点开了 Tailscale SSH，改用「Tailscale SSH」方式</string>
+    <string name="ssh_hint_password">• 用户名或密码错误，或服务器禁用了密码登录（PasswordAuthentication no）</string>
+    <string name="ssh_hint_tailscale">• 节点没开 Tailscale SSH（tailscale set --ssh），或 ACL 不允许本设备以 %1$s 登录。可改用密码或密钥。</string>
 </resources>

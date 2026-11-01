@@ -12,6 +12,8 @@ class TaildeckApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Lets chrome://inspect attach to in-app pages to debug layout issues.
+        android.webkit.WebView.setWebContentsDebuggingEnabled(true)
         instance = this
         store = Store(this)
         tailscale = Tailscale(this, store)

@@ -73,7 +73,7 @@ private sealed interface Conn {
 
 // Owns the SSH session for one screen and pipes bytes between it and the
 // Ghostty-backed TerminalView.
-private class SshController(private val keys: SshKeys) {
+private class SshController(private val keys: SshKeys, private val res: android.content.res.Resources) {
     var view: TerminalView? = null
     var onState: (Conn) -> Unit = {}
 
@@ -129,9 +129,37 @@ private class SshController(private val keys: SshKeys) {
                 main.post { onState(Conn.Connected) }
             } catch (e: Exception) {
                 feed("\r\n\u001b[31m${e.message}\u001b[0m\r\n".toByteArray())
+                if (e.message?.contains("unable to authenticate") == true) {
+                    authHints(host, profile).forEach { feed("\u001b[33m$it\u001b[0m\r\n".toByteArray()) }
+                }
                 main.post { onState(Conn.Closed(e.message ?: "")) }
             }
         }
+    }
+
+    // The server only says which methods failed; spell out the usual causes.
+    private fun authHints(host: String, profile: SshProfile): List<String> {
+        val user = profile.user
+        val lines = mutableListOf("", res.getString(R.string.ssh_auth_rejected, user, host))
+        when (profile.auth) {
+            SshAuth.KEY -> {
+                keys.list.value.firstOrNull { it.id == profile.keyId }?.let { id ->
+                    lines += res.getString(R.string.ssh_auth_used_key, id.type, id.fingerprint)
+                    if (id.hasCert && user !in id.certPrincipals) {
+                        lines += res.getString(R.string.ssh_hint_cert_principal, id.certPrincipals.joinToString(","), user)
+                    }
+                }
+                lines += res.getString(R.string.ssh_hint_authorized_keys, user)
+                if (user == "root") lines += res.getString(R.string.ssh_hint_root)
+                lines += res.getString(R.string.ssh_hint_try_tailscale)
+            }
+            SshAuth.PASSWORD -> {
+                lines += res.getString(R.string.ssh_hint_password)
+                if (user == "root") lines += res.getString(R.string.ssh_hint_root)
+            }
+            SshAuth.TAILSCALE -> lines += res.getString(R.string.ssh_hint_tailscale, user)
+        }
+        return lines
     }
 
     fun close() {
@@ -157,7 +185,7 @@ private val EXTRA_CHARS = listOf("|", "/", "-", "~", "_", ":")
 fun TerminalScreen(node: String, onBack: () -> Unit) {
     val app = TaildeckApp.instance
     val saved = remember { app.store.sshProfile(node) }
-    val controller = remember { SshController(app.keys) }
+    val controller = remember { SshController(app.keys, app.resources) }
     var conn by remember { mutableStateOf<Conn>(Conn.Idle) }
     var profile by remember { mutableStateOf(saved?.takeIf { it.auth != SshAuth.PASSWORD || it.password.isNotEmpty() }) }
     var showDialog by remember { mutableStateOf(profile == null) }

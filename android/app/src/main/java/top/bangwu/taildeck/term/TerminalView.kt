@@ -280,8 +280,10 @@ class TerminalView(context: Context) : View(context) {
 
         override fun onLongPress(e: MotionEvent) {
             selecting = true
-            selStart = cellAt(e.x, e.y)
-            GhosttyNative.select(handle, selStart.first, selStart.second, selStart.first, selStart.second)
+            val (x, y) = cellAt(e.x, e.y)
+            val (from, to) = wordAt(x, y)
+            selStart = from to y
+            GhosttyNative.select(handle, from, y, to, y)
             performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
             invalidate()
         }
@@ -311,6 +313,20 @@ class TerminalView(context: Context) : View(context) {
             GhosttyNative.scroll(handle, steps)
             invalidate()
         }
+    }
+
+    /** Column range of the non-blank run under (x, y), from the last drawn frame. */
+    private fun wordAt(x: Int, y: Int): Pair<Int, Int> {
+        fun blank(col: Int): Boolean {
+            val i = (y * cols + col) * 4
+            return i + 3 >= cells.size || cells[i] <= 32 && cells[i + 3] and GhosttyNative.F_SPACER == 0
+        }
+        if (blank(x)) return x to x
+        var from = x
+        while (from > 0 && !blank(from - 1)) from--
+        var to = x
+        while (to < cols - 1 && !blank(to + 1)) to++
+        return from to to
     }
 
     private fun cellAt(x: Float, y: Float): Pair<Int, Int> =

@@ -123,4 +123,12 @@
     <string name="web_cert_title">Untrusted certificate</string>
     <string name="web_cert_body">%1$s presented a certificate this device doesn\'t trust. Common for self-signed services. Continue anyway?</string>
     <string name="web_continue">Continue</string>
+    <string name="ssh_auth_rejected">The server rejected %1$s@%2$s.</string>
+    <string name="ssh_auth_used_key">Offered key: %1$s %2$s</string>
+    <string name="ssh_hint_cert_principal">• The certificate is only valid for [%1$s], not %2$s</string>
+    <string name="ssh_hint_authorized_keys">• Add the public key to ~%1$s/.ssh/authorized_keys on the node (Settings → SSH keys → Copy public key)</string>
+    <string name="ssh_hint_root">• For root, sshd_config may have PermitRootLogin no</string>
+    <string name="ssh_hint_try_tailscale">• If the node runs Tailscale SSH, connect with \"Tailscale SSH\" instead</string>
+    <string name="ssh_hint_password">• Wrong user or password, or the server disables PasswordAuthentication</string>
+    <string name="ssh_hint_tailscale">• Tailscale SSH is not enabled on the node (tailscale set --ssh), or your ACL doesn\'t allow this device to log in as %1$s. Use a password or key instead.</string>
 </resources>
