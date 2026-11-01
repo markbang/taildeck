@@ -264,7 +264,13 @@ class TerminalView(context: Context) : View(context) {
         override fun onDown(e: MotionEvent) = true
 
         override fun onSingleTapUp(e: MotionEvent): Boolean {
-            if (actionMode != null) clearSelection() else showKeyboard()
+            when {
+                actionMode != null -> clearSelection()
+                // Apps that enabled mouse reporting (tmux, htop, herdr, ...) get
+                // the tap as a click; the keyboard stays on its own button.
+                mouseTracking -> click(e.x, e.y)
+                else -> showKeyboard()
+            }
             return true
         }
 
@@ -300,12 +306,30 @@ class TerminalView(context: Context) : View(context) {
         }
     })
 
+    private val mouseTracking get() = meta[13] != 0
+
+    /** Sends a mouse event for the cell under (x, y), centered so encoders map it exactly. */
+    private fun mouse(action: Int, button: Int, pressed: Boolean, x: Float, y: Float) {
+        val (col, row) = cellAt(x, y)
+        val cw = ceil(cellW).toInt()
+        send(
+            GhosttyNative.encodeMouse(
+                handle, action, button, pressed,
+                (col + 0.5f) * cw, (row + 0.5f) * cellH, cols * cw, rows * cellH, cw, cellH,
+            ),
+        )
+    }
+
+    private fun click(x: Float, y: Float) {
+        mouse(GhosttyNative.MOUSE_PRESS, GhosttyNative.BUTTON_LEFT, true, x, y)
+        mouse(GhosttyNative.MOUSE_RELEASE, GhosttyNative.BUTTON_LEFT, false, x, y)
+    }
+
     /** Positive = towards newer output (finger moving up). */
     private fun scrollLines(steps: Int, x: Float, y: Float) {
-        if (meta[13] != 0) {
-            repeat(abs(steps)) {
-                send(GhosttyNative.encodeWheel(handle, steps < 0, x, y, width, height, ceil(cellW).toInt(), cellH))
-            }
+        if (mouseTracking) {
+            val button = if (steps < 0) GhosttyNative.BUTTON_WHEEL_UP else GhosttyNative.BUTTON_WHEEL_DOWN
+            repeat(abs(steps)) { mouse(GhosttyNative.MOUSE_PRESS, button, false, x, y) }
         } else if (meta[14] != 0) {
             // Alternate screen without mouse support (less, man): page with arrows.
             repeat(abs(steps)) { send(GhosttyNative.encodeKey(handle, if (steps < 0) KeyEvent.KEYCODE_DPAD_UP else KeyEvent.KEYCODE_DPAD_DOWN, 0, null, 0)) }
@@ -418,6 +442,8 @@ class TerminalView(context: Context) : View(context) {
         fill.color = defBg
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fill)
         if (meta[12] != 0) GhosttyNative.title(handle)?.let { onTitle(String(it, Charsets.UTF_8)) }
+        val effects = meta[15]
+        if (effects != 0) post { handleEffects(effects) }
 
         val multi = if (extraLen > 0) parseExtra(extraLen) else null
 
@@ -480,6 +506,21 @@ class TerminalView(context: Context) : View(context) {
         }
         drawCursor(canvas, c, defFg, defBg)
         drawScrollbar(canvas)
+    }
+
+    private fun handleEffects(effects: Int) {
+        if (closed) return
+        if (effects and 1 != 0) performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+        // OSC 52: remote programs (tmux, vim, TUIs) copying to the system clipboard.
+        GhosttyNative.takeClipboard(handle)?.let {
+            clipboard().setPrimaryClip(ClipData.newPlainText("terminal", String(it, Charsets.UTF_8)))
+        }
+    }
+
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        super.onWindowFocusChanged(hasWindowFocus)
+        if (!closed) GhosttyNative.encodeFocus(handle, hasWindowFocus)?.let(onSend)
+        invalidate()
     }
 
     private fun parseExtra(len: Int): Map<Int, String> {

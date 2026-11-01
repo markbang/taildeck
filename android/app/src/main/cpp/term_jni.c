@@ -25,6 +25,11 @@ typedef struct {
   size_t out_len;
   size_t out_cap;
   int title_changed;
+  int bell;
+  // Latest OSC 52 clipboard write, handed to Kotlin after vt_write.
+  uint8_t* clip;
+  size_t clip_len;
+  int clip_pending;
 } Term;
 
 static void out_append(Term* t, const uint8_t* data, size_t len) {
@@ -48,6 +53,38 @@ static void on_write_pty(GhosttyTerminal term, void* ud, const uint8_t* data, si
 static void on_title(GhosttyTerminal term, void* ud) {
   (void)term;
   ((Term*)ud)->title_changed = 1;
+}
+
+static void on_bell(GhosttyTerminal term, void* ud) {
+  (void)term;
+  ((Term*)ud)->bell = 1;
+}
+
+static void on_clipboard_write(GhosttyTerminal term, void* ud, const GhosttyClipboardWrite* w) {
+  (void)term;
+  Term* t = (Term*)ud;
+  GhosttyClipboardWriteReply reply = {.size = sizeof(reply), .result = GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS, .remember = false};
+  const GhosttyClipboardContent* text = NULL;
+  for (size_t i = 0; i < w->contents_len; i++) {
+    const GhosttyClipboardContent* c = &w->contents[i];
+    if (c->mime.len == 0 || (c->mime.len >= 4 && memcmp(c->mime.ptr, "text", 4) == 0)) {
+      text = c;
+      break;
+    }
+  }
+  // Phones have one clipboard; selection/primary writes land there too.
+  if (text) {
+    uint8_t* p = realloc(t->clip, text->data.len + 1);
+    if (p) {
+      memcpy(p, text->data.ptr, text->data.len);
+      t->clip = p;
+      t->clip_len = text->data.len;
+      t->clip_pending = 1;
+    }
+  } else {
+    reply.result = GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED;
+  }
+  w->reply(w, &reply);
 }
 
 static jbyteArray take_out(JNIEnv* env, Term* t) {
@@ -93,6 +130,8 @@ JNIEXPORT jlong JNICALL FN(create)(JNIEnv* env, jclass cls, jint cols, jint rows
   ghostty_terminal_set(t->term, GHOSTTY_TERMINAL_OPT_USERDATA, t);
   ghostty_terminal_set(t->term, GHOSTTY_TERMINAL_OPT_WRITE_PTY, (const void*)on_write_pty);
   ghostty_terminal_set(t->term, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED, (const void*)on_title);
+  ghostty_terminal_set(t->term, GHOSTTY_TERMINAL_OPT_BELL, (const void*)on_bell);
+  ghostty_terminal_set(t->term, GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE, (const void*)on_clipboard_write);
   size_t lines = (size_t)scrollback;
   ghostty_terminal_set(t->term, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES, &lines);
   GhosttyColorRgb cfg = to_rgb(fg), cbg = to_rgb(bg), ccur = to_rgb(cur);
@@ -117,6 +156,7 @@ JNIEXPORT void JNICALL FN(destroy)(JNIEnv* env, jclass cls, jlong handle) {
   ghostty_render_state_free(t->rs);
   ghostty_terminal_free(t->term);
   free(t->out);
+  free(t->clip);
   pthread_mutex_unlock(&t->mu);
   pthread_mutex_destroy(&t->mu);
   free(t);
@@ -228,6 +268,8 @@ JNIEXPORT jint JNICALL FN(snapshot)(JNIEnv* env, jclass cls, jlong handle, jintA
   GhosttyTerminalScreen screen = GHOSTTY_TERMINAL_SCREEN_PRIMARY;
   ghostty_terminal_get(t->term, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen);
   meta[14] = screen == GHOSTTY_TERMINAL_SCREEN_ALTERNATE;
+  meta[15] = (t->bell ? 1 : 0) | (t->clip_pending ? 2 : 0);
+  t->bell = 0;
 
   ghostty_render_state_get(t->rs, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &t->rows);
   int y = 0;
@@ -368,9 +410,11 @@ JNIEXPORT jbyteArray JNICALL FN(encodeKey)(JNIEnv* env, jclass cls, jlong handle
   return r == GHOSTTY_SUCCESS ? bytes(env, buf, n) : NULL;
 }
 
-// Encodes a wheel step at pixel (x, y) for apps with mouse tracking enabled.
-JNIEXPORT jbyteArray JNICALL FN(encodeWheel)(JNIEnv* env, jclass cls, jlong handle, jboolean up, jfloat x, jfloat y,
-                                              jint w, jint h, jint cw, jint ch) {
+// Encodes a mouse event at pixel (x, y) per the remote's tracking mode and
+// format. action: 0 press, 1 release, 2 motion; button: 0 none, 1 left,
+// 4/5 wheel up/down. Returns null when the remote doesn't want this event.
+JNIEXPORT jbyteArray JNICALL FN(encodeMouse)(JNIEnv* env, jclass cls, jlong handle, jint action, jint button, jboolean pressed,
+                                              jfloat x, jfloat y, jint w, jint h, jint cw, jint ch) {
   (void)cls;
   Term* t = T;
   char buf[64];
@@ -383,13 +427,49 @@ JNIEXPORT jbyteArray JNICALL FN(encodeWheel)(JNIEnv* env, jclass cls, jlong hand
   size.cell_width = (uint32_t)cw;
   size.cell_height = (uint32_t)ch;
   ghostty_mouse_encoder_setopt(t->mouse, GHOSTTY_MOUSE_ENCODER_OPT_SIZE, &size);
-  ghostty_mouse_event_set_action(t->mouse_event, GHOSTTY_MOUSE_ACTION_PRESS);
-  ghostty_mouse_event_set_button(t->mouse_event, up ? GHOSTTY_MOUSE_BUTTON_FOUR : GHOSTTY_MOUSE_BUTTON_FIVE);
+  bool any = pressed;
+  ghostty_mouse_encoder_setopt(t->mouse, GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED, &any);
+  ghostty_mouse_event_set_action(t->mouse_event, (GhosttyMouseAction)action);
+  if (button > 0) {
+    ghostty_mouse_event_set_button(t->mouse_event, (GhosttyMouseButton)button);
+  } else {
+    ghostty_mouse_event_clear_button(t->mouse_event);
+  }
   ghostty_mouse_event_set_mods(t->mouse_event, 0);
   ghostty_mouse_event_set_position(t->mouse_event, (GhosttyMousePosition){.x = x, .y = y});
   GhosttyResult r = ghostty_mouse_encoder_encode(t->mouse, t->mouse_event, buf, sizeof(buf), &n);
   pthread_mutex_unlock(&t->mu);
   return r == GHOSTTY_SUCCESS ? bytes(env, buf, n) : NULL;
+}
+
+// Focus in/out report, only when the remote enabled mode 1004.
+JNIEXPORT jbyteArray JNICALL FN(encodeFocus)(JNIEnv* env, jclass cls, jlong handle, jboolean gained) {
+  (void)cls;
+  Term* t = T;
+  bool enabled = false;
+  GhosttyTerminalModeConfig mode = {.mode = GHOSTTY_MODE_FOCUS_EVENT};
+  pthread_mutex_lock(&t->mu);
+  if (ghostty_terminal_get(t->term, GHOSTTY_TERMINAL_DATA_MODE, &mode) == GHOSTTY_SUCCESS) enabled = mode.value;
+  pthread_mutex_unlock(&t->mu);
+  if (!enabled) return NULL;
+  char buf[8];
+  size_t n = 0;
+  if (ghostty_focus_encode(gained ? GHOSTTY_FOCUS_GAINED : GHOSTTY_FOCUS_LOST, buf, sizeof(buf), &n) != GHOSTTY_SUCCESS) return NULL;
+  return bytes(env, buf, n);
+}
+
+JNIEXPORT jbyteArray JNICALL FN(takeClipboard)(JNIEnv* env, jclass cls, jlong handle) {
+  (void)cls;
+  Term* t = T;
+  jbyteArray s = NULL;
+  pthread_mutex_lock(&t->mu);
+  if (t->clip_pending) {
+    s = (*env)->NewByteArray(env, (jsize)t->clip_len);
+    if (s) (*env)->SetByteArrayRegion(env, s, 0, (jsize)t->clip_len, (const jbyte*)t->clip);
+    t->clip_pending = 0;
+  }
+  pthread_mutex_unlock(&t->mu);
+  return s;
 }
 
 // Wraps pasted text in bracketed-paste markers when the remote asked for it.
