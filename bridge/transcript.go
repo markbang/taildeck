@@ -2,8 +2,11 @@ package tsbridge
 
 import (
 	"bytes"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"regexp"
 	"strings"
 	"time"
@@ -13,7 +16,7 @@ import (
 // chatMsg is the agent-neutral message shape the app renders.
 type chatMsg struct {
 	ID      string `json:"id"`
-	Role    string `json:"role"` // user, assistant, thinking, tool, system
+	Role    string `json:"role"` // user, assistant, thinking, tool, system, command, output, recap, teammate, task
 	Text    string `json:"text,omitempty"`
 	Name    string `json:"name,omitempty"`
 	Input   string `json:"input,omitempty"`
@@ -24,6 +27,18 @@ type chatMsg struct {
 	Kind    string `json:"kind,omitempty"`    // tools: shell, read, edit, write, search, fetch, task, todo, other
 	Summary string `json:"summary,omitempty"` // tools: the one argument that says what the call does
 	Diff    string `json:"diff,omitempty"`    // edits and writes, as +/- lines
+
+	Call       string   `json:"call,omitempty"`       // tools: the agent's own call id
+	Images     []string `json:"images,omitempty"`     // "img:<id>" (see Herdr.Image) or file paths on the node
+	From       string   `json:"from,omitempty"`       // teammate messages: the sender
+	Queued     bool     `json:"queued,omitempty"`     // sent while the agent was working
+	Background bool     `json:"background,omitempty"` // async subagent or background job still running
+}
+
+type queuedPrompt struct {
+	ID    string `json:"id"`
+	Text  string `json:"text"`
+	human bool
 }
 
 type todoItem struct {
@@ -56,6 +71,12 @@ type transcript struct {
 	used   int64 // tokens in context after the latest model call
 	window int64 // context window, when the agent records it
 	model  string
+
+	effort, permissionMode, gitBranch, cwd string
+	queue                                  []queuedPrompt // Claude's own queue of prompts typed while it works
+	images                                 *imageStore
+	sidechain                              bool // subagent transcripts are all sidechain
+	limit                                  int  // most messages rendered
 
 	pi     []piEntry
 	piByID map[string]int
@@ -105,7 +126,19 @@ func (h *Herdr) Transcript(target string) (string, error) {
 	if kind == "omp" {
 		kind = "pi"
 	}
-	file, matched := h.resolveSessionFile(kind, a)
+	file, matched := "", ""
+	if a.AgentSession == nil || a.AgentSession.Value == "" {
+		cwd := a.ForegroundCwd
+		if cwd == "" {
+			cwd = a.Cwd
+		}
+		if file = h.identify(target, kind, cwd); file != "" {
+			matched = "session"
+		}
+	}
+	if file == "" {
+		file, matched = h.resolveSessionFile(kind, a)
+	}
 	if file != "" {
 		if out, err := h.readTranscript(target, kind, file, matched); err == nil {
 			return out, nil
@@ -184,9 +217,20 @@ func (h *Herdr) readTranscript(target, kind, file, matched string) (string, erro
 	defer h.tmu.Unlock()
 	for attempt := 0; attempt < 2; attempt++ {
 		t := h.transcripts[target]
+		window := h.windows[target]
+		if window == 0 {
+			window = initialWindow
+		}
 		if t == nil || t.file != file || t.kind != kind {
-			t = &transcript{file: file, kind: kind, tools: map[string]int{}, piByID: map[string]int{}}
+			t = &transcript{
+				file: file, kind: kind, tools: map[string]int{}, piByID: map[string]int{},
+				images: h.images, limit: maxMessages * (window / initialWindow),
+			}
 			h.transcripts[target] = t
+		}
+		chunk := maxChunk
+		if !t.started && window > chunk {
+			chunk = window
 		}
 		first := 0
 		if !t.started {
@@ -198,7 +242,7 @@ func (h *Herdr) readTranscript(target, kind, file, matched string) (string, erro
 s=$(wc -c < "$f"); s=$((s+0)); o=%d
 if [ %d = 1 ] && [ "$s" -gt %d ]; then o=$((s-%d)); fi
 echo "$s $o"; [ "$o" -lt "$s" ] && tail -c +$((o+1)) "$f" | head -c %d; true`,
-			shellQuote(file), t.offset, first, initialWindow, initialWindow, maxChunk), 30*time.Second)
+			shellQuote(file), t.offset, first, window, window, chunk), 60*time.Second)
 		if err != nil {
 			return "", err
 		}
@@ -253,7 +297,7 @@ func (t *transcript) feed(data []byte) {
 }
 
 func (t *transcript) add(m chatMsg) {
-	if m.Text == "" && m.Role != "tool" {
+	if m.Text == "" && m.Role != "tool" && m.Kind == "" && len(m.Images) == 0 {
 		return
 	}
 	m.Text = clip(m.Text, maxText)
@@ -269,6 +313,7 @@ func (t *transcript) add(m chatMsg) {
 func (t *transcript) addTool(id, name string, args []byte) {
 	m := toolMsg(name, args)
 	m.ID = "tool:" + id + fmt.Sprint(len(t.msgs))
+	m.Call = id
 	if todos, ok := parseTodos(name, args); ok {
 		t.todos = todos
 	}
@@ -278,11 +323,12 @@ func (t *transcript) addTool(id, name string, args []byte) {
 	}
 }
 
-func (t *transcript) toolResult(id, output string, isErr bool) {
+func (t *transcript) toolResult(id, output string, isErr bool, images ...string) {
 	if i, ok := t.tools[id]; ok {
 		t.msgs[i].Output = clip(output, maxToolText)
 		t.msgs[i].Error = isErr
 		t.msgs[i].Pending = false
+		t.msgs[i].Images = images
 	}
 }
 
@@ -293,9 +339,19 @@ func (t *transcript) render(matched string) (string, error) {
 		msgs, used, model = t.piPath()
 	}
 	truncated := t.truncated
-	if len(msgs) > maxMessages {
-		msgs = msgs[len(msgs)-maxMessages:]
+	limit := t.limit
+	if limit == 0 {
+		limit = maxMessages
+	}
+	if len(msgs) > limit {
+		msgs = msgs[len(msgs)-limit:]
 		truncated = true
+	}
+	queued := []queuedPrompt{}
+	for _, q := range t.queue {
+		if q.human {
+			queued = append(queued, q)
+		}
 	}
 	if msgs == nil {
 		msgs = []chatMsg{}
@@ -304,6 +360,11 @@ func (t *transcript) render(matched string) (string, error) {
 		"mode": "transcript", "source": t.kind, "file": t.file, "matched": matched,
 		"truncated": truncated, "messages": msgs, "todos": t.todos, "model": model,
 		"context": map[string]int64{"used": used, "window": t.window},
+		"queued":  queued,
+		"settings": map[string]string{
+			"model": model, "effort": t.effort, "permission_mode": t.permissionMode,
+			"git_branch": t.gitBranch, "cwd": t.cwd,
+		},
 	})
 	return string(b), err
 }
@@ -328,7 +389,7 @@ func (t *transcript) piLine(line []byte) {
 	}
 	switch e.Type {
 	case "message":
-		pe.msgs, pe.results = piMessage(e.ID, e.Message)
+		pe.msgs, pe.results = t.piMessage(e.ID, e.Message)
 		var u struct {
 			Model string `json:"model"`
 			Usage struct {
@@ -357,7 +418,7 @@ func (t *transcript) piLine(line []byte) {
 	t.pi = append(t.pi, pe)
 }
 
-func piMessage(id string, raw json.RawMessage) (msgs, results []chatMsg) {
+func (t *transcript) piMessage(id string, raw json.RawMessage) (msgs, results []chatMsg) {
 	var m struct {
 		Role       string          `json:"role"`
 		Content    json.RawMessage `json:"content"`
@@ -369,6 +430,8 @@ func piMessage(id string, raw json.RawMessage) (msgs, results []chatMsg) {
 		Summary    string          `json:"summary"`
 		Display    *bool           `json:"display"`
 		Timestamp  json.RawMessage `json:"timestamp"`
+		StopReason string          `json:"stopReason"`
+		ErrorMsg   string          `json:"errorMessage"`
 	}
 	if json.Unmarshal(raw, &m) != nil {
 		return nil, nil
@@ -381,7 +444,8 @@ func piMessage(id string, raw json.RawMessage) (msgs, results []chatMsg) {
 	}()
 	switch m.Role {
 	case "user":
-		return []chatMsg{{ID: id, Role: "user", Text: contentText(m.Content)}}, nil
+		text, images := t.parts(m.Content)
+		return []chatMsg{{ID: id, Role: "user", Text: text, Images: images}}, nil
 	case "assistant":
 		var blocks []struct {
 			Type      string          `json:"type"`
@@ -402,12 +466,22 @@ func piMessage(id string, raw json.RawMessage) (msgs, results []chatMsg) {
 			case "toolCall":
 				tm := toolMsg(b.Name, b.Arguments)
 				tm.ID = "call:" + b.ID
+				tm.Call = b.ID
 				msgs = append(msgs, tm)
 			}
 		}
+		switch m.StopReason {
+		case "error":
+			if m.ErrorMsg != "" {
+				msgs = append(msgs, chatMsg{ID: id + ".error", Role: "system", Kind: "error", Text: clip(m.ErrorMsg, 2000)})
+			}
+		case "aborted":
+			msgs = append(msgs, chatMsg{ID: id + ".aborted", Role: "system", Kind: "interrupted"})
+		}
 		return msgs, nil
 	case "toolResult":
-		return nil, []chatMsg{{Name: m.ToolCallID, Output: contentText(m.Content), Error: m.IsError}}
+		text, images := t.parts(m.Content)
+		return nil, []chatMsg{{Name: m.ToolCallID, Output: text, Error: m.IsError, Images: images}}
 	case "bashExecution":
 		out := m.Output
 		return []chatMsg{{ID: id, Role: "tool", Name: "bash", Kind: "shell", Summary: firstLine(m.Command), Input: m.Command, Output: out, Error: m.ExitCode != nil && *m.ExitCode != 0}}, nil
@@ -457,12 +531,13 @@ func (t *transcript) piPath() (msgs []chatMsg, used int64, model string) {
 				out[i].Output = clip(r.Output, maxToolText)
 				out[i].Error = r.Error
 				out[i].Pending = false
+				out[i].Images = r.Images
 			}
 		}
 	}
 	filtered := out[:0]
 	for _, m := range out {
-		if m.Text != "" || m.Role == "tool" {
+		if m.Text != "" || m.Role == "tool" || m.Kind != "" || len(m.Images) > 0 {
 			filtered = append(filtered, m)
 		}
 	}
@@ -473,11 +548,30 @@ func (t *transcript) piPath() (msgs []chatMsg, used int64, model string) {
 
 func (t *transcript) claudeLine(line []byte) {
 	var e struct {
-		Type        string `json:"type"`
-		UUID        string `json:"uuid"`
-		IsSidechain bool   `json:"isSidechain"`
-		IsMeta      bool   `json:"isMeta"`
-		Message     struct {
+		Type                      string          `json:"type"`
+		UUID                      string          `json:"uuid"`
+		Subtype                   string          `json:"subtype"`
+		Operation                 string          `json:"operation"`
+		IsSidechain               bool            `json:"isSidechain"`
+		IsMeta                    bool            `json:"isMeta"`
+		IsCompactSummary          bool            `json:"isCompactSummary"`
+		IsVisibleInTranscriptOnly bool            `json:"isVisibleInTranscriptOnly"`
+		Content                   json.RawMessage `json:"content"`
+		Timestamp                 json.RawMessage `json:"timestamp"`
+		PermissionMode            string          `json:"permissionMode"`
+		Cwd                       string          `json:"cwd"`
+		GitBranch                 string          `json:"gitBranch"`
+		Effort                    string          `json:"effort"`
+		ToolUseResult             json.RawMessage `json:"toolUseResult"`
+		Attachment                *struct {
+			Type        string          `json:"type"`
+			Prompt      json.RawMessage `json:"prompt"`
+			CommandMode string          `json:"commandMode"`
+			Origin      *struct {
+				Kind string `json:"kind"`
+			} `json:"origin"`
+		} `json:"attachment"`
+		Message struct {
 			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
 			Model   string          `json:"model"`
@@ -488,19 +582,49 @@ func (t *transcript) claudeLine(line []byte) {
 				Output      int64 `json:"output_tokens"`
 			} `json:"usage"`
 		} `json:"message"`
-		Subtype   string          `json:"subtype"`
-		Content   string          `json:"content"`
-		Timestamp json.RawMessage `json:"timestamp"`
 	}
-	if json.Unmarshal(line, &e) != nil || e.IsSidechain || e.IsMeta {
+	if json.Unmarshal(line, &e) != nil || e.IsSidechain && !t.sidechain {
 		return
 	}
 	t.ts = parseTS(e.Timestamp)
+	if e.Cwd != "" {
+		t.cwd, t.gitBranch = e.Cwd, e.GitBranch
+	}
+	if e.PermissionMode != "" && (e.Type == "user" || e.Type == "permission-mode") {
+		t.permissionMode = e.PermissionMode
+	}
 	switch e.Type {
+	case "queue-operation":
+		t.queueOp(e.Operation, rawString(e.Content))
+	case "attachment":
+		a := e.Attachment
+		if a != nil && a.Type == "queued_command" && (a.Origin == nil || a.Origin.Kind == "human") && (a.CommandMode == "" || a.CommandMode == "prompt") {
+			text, images := t.parts(a.Prompt)
+			t.userText(e.UUID, text, images, true)
+		}
+	case "system":
+		switch e.Subtype {
+		case "compact_boundary":
+			t.add(chatMsg{ID: e.UUID, Role: "system", Kind: "compacted"})
+		case "away_summary":
+			text := strings.TrimSpace(recapHint.ReplaceAllString(rawString(e.Content), ""))
+			t.add(chatMsg{ID: e.UUID, Role: "recap", Text: text})
+		case "local_command":
+			if !e.IsMeta {
+				t.userText(e.UUID, rawString(e.Content), nil, false)
+			}
+		}
 	case "user":
+		if e.IsMeta || e.IsVisibleInTranscriptOnly {
+			return
+		}
+		if e.IsCompactSummary {
+			t.add(chatMsg{ID: e.UUID, Role: "system", Kind: "compacted"})
+			return
+		}
 		var s string
 		if json.Unmarshal(e.Message.Content, &s) == nil {
-			t.add(chatMsg{ID: e.UUID, Role: claudeUserRole(s), Text: claudeCleanUser(s)})
+			t.userText(e.UUID, s, nil, false)
 			return
 		}
 		var blocks []struct {
@@ -509,15 +633,33 @@ func (t *transcript) claudeLine(line []byte) {
 			ToolUseID string          `json:"tool_use_id"`
 			Content   json.RawMessage `json:"content"`
 			IsError   bool            `json:"is_error"`
+			Source    *imageSource    `json:"source"`
 		}
 		json.Unmarshal(e.Message.Content, &blocks)
-		for i, b := range blocks {
+		var texts, images []string
+		for _, b := range blocks {
 			switch b.Type {
 			case "text":
-				t.add(chatMsg{ID: fmt.Sprintf("%s.%d", e.UUID, i), Role: claudeUserRole(b.Text), Text: claudeCleanUser(b.Text)})
+				texts = append(texts, b.Text)
+			case "image":
+				if ref := t.storeImage(b.Source); ref != "" {
+					images = append(images, ref)
+				}
 			case "tool_result":
-				t.toolResult(b.ToolUseID, contentText(b.Content), b.IsError)
+				var r struct {
+					IsAsync bool `json:"isAsync"`
+				}
+				json.Unmarshal(e.ToolUseResult, &r)
+				if i, ok := t.tools[b.ToolUseID]; ok && r.IsAsync && t.msgs[i].Kind == "task" {
+					t.msgs[i].Background = true
+					continue
+				}
+				text, imgs := t.parts(b.Content)
+				t.toolResult(b.ToolUseID, text, b.IsError, imgs...)
 			}
+		}
+		if len(texts) > 0 || len(images) > 0 {
+			t.userText(e.UUID, strings.Join(texts, "\n"), images, false)
 		}
 	case "assistant":
 		if u := e.Message.Usage; u != nil {
@@ -525,6 +667,9 @@ func (t *transcript) claudeLine(line []byte) {
 		}
 		if e.Message.Model != "" && !strings.HasPrefix(e.Message.Model, "<") {
 			t.model = e.Message.Model
+		}
+		if e.Effort != "" {
+			t.effort = strings.ToLower(e.Effort)
 		}
 		var blocks []struct {
 			Type     string          `json:"type"`
@@ -539,42 +684,188 @@ func (t *transcript) claudeLine(line []byte) {
 			id := fmt.Sprintf("%s.%d", e.UUID, i)
 			switch b.Type {
 			case "text":
-				t.add(chatMsg{ID: id, Role: "assistant", Text: b.Text})
+				t.add(chatMsg{ID: id, Role: "assistant", Text: strings.TrimSpace(b.Text)})
 			case "thinking":
-				t.add(chatMsg{ID: id, Role: "thinking", Text: b.Thinking})
+				t.add(chatMsg{ID: id, Role: "thinking", Text: strings.TrimSpace(b.Thinking)})
 			case "tool_use":
 				t.addTool(b.ID, b.Name, b.Input)
 			}
 		}
-	case "system":
-		if e.Subtype == "compact_boundary" {
-			t.add(chatMsg{ID: e.UUID, Role: "system", Text: "Conversation compacted"})
+	}
+}
+
+var (
+	claudeTag       = regexp.MustCompile(`(?s)<(command-name|command-message|command-args|local-command-stdout|local-command-stderr)>(.*?)</[a-z-]+>`)
+	systemReminder  = regexp.MustCompile(`(?s)<system-reminder>.*?</system-reminder>`)
+	recapHint       = regexp.MustCompile(`\s*\(disable recaps in /config\)\s*$`)
+	ansiEscape      = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]|\x1b\\][^\x07\x1b]*(?:\x07|\x1b\\\\)|\x1b[()][0-9A-Za-z]|\x1b[=>78]")
+	teammateMessage = regexp.MustCompile(`(?s)<teammate-message\b([^>]*)>(.*?)</teammate-message>`)
+	xmlAttr         = regexp.MustCompile(`([a-zA-Z_][\w-]*)="([^"]*)"`)
+	leadingTag      = regexp.MustCompile(`^\s*<([a-z][a-z0-9_-]*)[\s>]`)
+	modelSet        = regexp.MustCompile("(?:Set model to|Kept model as) (?:`([^`]+)`|([^\\s<]+))")
+	effortSet       = regexp.MustCompile(`Set effort level to ([A-Za-z]+)`)
+)
+
+func xmlField(s, tag string) string {
+	m := regexp.MustCompile(`(?s)<` + tag + `>(.*?)</` + tag + `>`).FindStringSubmatch(s)
+	if m == nil {
+		return ""
+	}
+	return strings.TrimSpace(html.UnescapeString(m[1]))
+}
+
+// userText classifies what Claude records as a user turn: real prompts,
+// slash commands and their output, teammate messages, background-job
+// notifications, interrupts, or injected context that isn't shown.
+func (t *transcript) userText(id, text string, images []string, queued bool) {
+	text = strings.TrimSpace(systemReminder.ReplaceAllString(text, ""))
+	if strings.Contains(text, "<teammate-message") {
+		for i, m := range teammateMessage.FindAllStringSubmatch(text, -1) {
+			attrs := map[string]string{}
+			for _, a := range xmlAttr.FindAllStringSubmatch(m[1], -1) {
+				attrs[a[1]] = a[2]
+			}
+			t.add(chatMsg{ID: fmt.Sprintf("%s.t%d", id, i), Role: "teammate", From: attrs["teammate_id"], Summary: attrs["summary"], Text: strings.TrimSpace(m[2])})
+		}
+		return
+	}
+	if claudeTag.MatchString(text) {
+		parts := map[string]string{}
+		for _, m := range claudeTag.FindAllStringSubmatch(text, -1) {
+			parts[m[1]] = strings.TrimSpace(m[2])
+		}
+		if name := parts["command-name"]; name != "" {
+			if !strings.HasPrefix(name, "/") {
+				name = "/" + name
+			}
+			t.add(chatMsg{ID: id, Role: "command", Text: strings.TrimSpace(name + " " + parts["command-args"])})
+		}
+		out := strings.TrimSpace(ansiEscape.ReplaceAllString(parts["local-command-stdout"]+parts["local-command-stderr"], ""))
+		if out != "" {
+			if m := modelSet.FindStringSubmatch(out); m != nil {
+				t.model = m[1] + m[2]
+			}
+			if m := effortSet.FindStringSubmatch(out); m != nil {
+				t.effort = strings.ToLower(m[1])
+			}
+			t.add(chatMsg{ID: id + ".out", Role: "output", Text: out})
+		}
+		return
+	}
+	if strings.Contains(text, "<task-notification>") {
+		m := chatMsg{ID: id, Role: "task", Text: xmlField(text, "summary"), Output: clip(xmlField(text, "result"), maxToolText)}
+		if call := xmlField(text, "tool-use-id"); call != "" {
+			if i, ok := t.tools[call]; ok {
+				t.msgs[i].Background = false
+				t.msgs[i].Pending = false
+				if t.msgs[i].Output == "" {
+					t.msgs[i].Output = m.Output
+				}
+			}
+		}
+		t.add(m)
+		return
+	}
+	if strings.HasPrefix(text, "[Request interrupted") {
+		t.add(chatMsg{ID: id, Role: "system", Kind: "interrupted"})
+		return
+	}
+	if m := leadingTag.FindStringSubmatch(text); m != nil && m[1] != "pasted_content" && strings.Contains(text, "</"+m[1]+">") {
+		return
+	}
+	t.add(chatMsg{ID: id, Role: "user", Text: text, Images: images, Queued: queued})
+}
+
+// queueOp mirrors Claude's queue of prompts typed while it works.
+func (t *transcript) queueOp(op, content string) {
+	switch op {
+	case "enqueue":
+		m := leadingTag.FindStringSubmatch(content)
+		injected := m != nil && strings.Contains(content, "</"+m[1]+">")
+		sum := sha1.Sum([]byte(fmt.Sprint(t.ts) + "\x00" + content))
+		text := strings.TrimSpace(systemReminder.ReplaceAllString(content, ""))
+		t.queue = append(t.queue, queuedPrompt{ID: hex.EncodeToString(sum[:8]), Text: text, human: !injected})
+	case "dequeue":
+		for i, q := range t.queue {
+			if q.human {
+				t.queue = append(t.queue[:i], t.queue[i+1:]...)
+				return
+			}
+		}
+		if len(t.queue) > 0 {
+			t.queue = t.queue[1:]
+		}
+	case "remove":
+		for i, q := range t.queue {
+			if q.Text == strings.TrimSpace(systemReminder.ReplaceAllString(content, "")) {
+				t.queue = append(t.queue[:i], t.queue[i+1:]...)
+				return
+			}
 		}
 	}
 }
 
-var claudeTag = regexp.MustCompile(`(?s)<(command-name|command-message|command-args|local-command-stdout|local-command-stderr)>(.*?)</[a-z-]+>`)
-
-func claudeUserRole(s string) string {
-	if strings.HasPrefix(strings.TrimSpace(s), "<") && claudeTag.MatchString(s) || strings.HasPrefix(s, "[Request interrupted") {
-		return "system"
-	}
-	return "user"
+type imageSource struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
 }
 
-// claudeCleanUser turns slash-command envelopes into "/cmd args".
-func claudeCleanUser(s string) string {
-	if !claudeTag.MatchString(s) {
-		return s
+func (t *transcript) storeImage(src *imageSource) string {
+	if src == nil || src.Type != "base64" || t.images == nil {
+		return ""
 	}
-	parts := map[string]string{}
-	for _, m := range claudeTag.FindAllStringSubmatch(s, -1) {
-		parts[m[1]] = strings.TrimSpace(m[2])
+	return t.images.put(src.Data)
+}
+
+// parts flattens a string or a list of text and image blocks.
+func (t *transcript) parts(raw json.RawMessage) (string, []string) {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s, nil
 	}
-	if name := parts["command-name"]; name != "" {
-		return strings.TrimSpace(name + " " + parts["command-args"])
+	var blocks []struct {
+		Type     string       `json:"type"`
+		Text     string       `json:"text"`
+		Source   *imageSource `json:"source"`
+		Data     string       `json:"data"`
+		ImageURL string       `json:"image_url"`
 	}
-	return strings.TrimSpace(parts["local-command-stdout"] + parts["local-command-stderr"])
+	json.Unmarshal(raw, &blocks)
+	var texts, images []string
+	for _, b := range blocks {
+		switch b.Type {
+		case "text", "input_text", "output_text":
+			texts = append(texts, b.Text)
+		case "image":
+			ref := t.storeImage(b.Source)
+			if ref == "" && b.Data != "" && t.images != nil {
+				ref = t.images.put(b.Data)
+			}
+			if ref != "" {
+				images = append(images, ref)
+			}
+		case "input_image":
+			if ref := t.dataURL(b.ImageURL); ref != "" {
+				images = append(images, ref)
+			}
+		}
+	}
+	return strings.Join(texts, "\n"), images
+}
+
+func (t *transcript) dataURL(u string) string {
+	_, data, ok := strings.Cut(u, ";base64,")
+	if !ok || !strings.HasPrefix(u, "data:image/") || t.images == nil {
+		return ""
+	}
+	return t.images.put(data)
+}
+
+func rawString(raw json.RawMessage) string {
+	var s string
+	json.Unmarshal(raw, &s)
+	return s
 }
 
 // ---- Codex: event_msg carries the chat, response_item carries tool calls ----
@@ -586,6 +877,7 @@ func (t *transcript) codexLine(line []byte) {
 		Payload   struct {
 			Type      string          `json:"type"`
 			Message   string          `json:"message"`
+			Images    []string        `json:"images"`
 			Text      string          `json:"text"`
 			Name      string          `json:"name"`
 			Arguments string          `json:"arguments"`
@@ -619,7 +911,17 @@ func (t *transcript) codexLine(line []byte) {
 			t.used, t.window = p.Info.Last.Total, p.Info.Window
 		}
 	case "event_msg/user_message":
-		t.add(chatMsg{Role: "user", Text: p.Message})
+		var images []string
+		for _, u := range p.Images {
+			if ref := t.dataURL(u); ref != "" {
+				images = append(images, ref)
+			}
+		}
+		t.add(chatMsg{Role: "user", Text: p.Message, Images: images})
+	case "event_msg/turn_aborted":
+		t.add(chatMsg{Role: "system", Kind: "interrupted"})
+	case "compacted/":
+		t.add(chatMsg{Role: "system", Kind: "compacted"})
 	case "event_msg/agent_message":
 		t.add(chatMsg{Role: "assistant", Text: p.Message})
 	case "event_msg/agent_reasoning":
@@ -632,22 +934,29 @@ func (t *transcript) codexLine(line []byte) {
 		args, _ := json.Marshal(map[string]any{"command": p.Action.Command})
 		t.addTool(p.CallID, "shell", args)
 	case "response_item/function_call_output", "response_item/custom_tool_call_output", "response_item/local_shell_call_output":
-		out := codexOutput(p.Output)
-		t.toolResult(p.CallID, out, false)
+		out, failed := codexOutput(p.Output)
+		t.toolResult(p.CallID, out, failed)
 	}
 }
 
-func codexOutput(raw json.RawMessage) string {
+var codexExit = regexp.MustCompile(`(?m)^Exit code: (\d+)`)
+
+// codexOutput returns a call's output and whether the command failed.
+func codexOutput(raw json.RawMessage) (string, bool) {
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		// Older Codex wraps output as {"output": "...", "metadata": {...}} inside a string.
+		// Older Codex wraps output as {"output": "...", "metadata": {"exit_code": n}} inside a string.
 		var inner struct {
-			Output string `json:"output"`
+			Output   string `json:"output"`
+			Metadata struct {
+				ExitCode int `json:"exit_code"`
+			} `json:"metadata"`
 		}
-		if json.Unmarshal([]byte(s), &inner) == nil && inner.Output != "" {
-			return inner.Output
+		if strings.HasPrefix(s, "{") && json.Unmarshal([]byte(s), &inner) == nil && inner.Output != "" {
+			return inner.Output, inner.Metadata.ExitCode != 0
 		}
-		return s
+		m := codexExit.FindStringSubmatch(s)
+		return s, m != nil && m[1] != "0"
 	}
 	var obj struct {
 		Content json.RawMessage `json:"content"`
@@ -655,11 +964,11 @@ func codexOutput(raw json.RawMessage) string {
 	}
 	if json.Unmarshal(raw, &obj) == nil {
 		if obj.Output != "" {
-			return obj.Output
+			return obj.Output, false
 		}
-		return contentText(obj.Content)
+		return contentText(obj.Content), false
 	}
-	return string(raw)
+	return string(raw), false
 }
 
 // ---- shared helpers ----
@@ -701,6 +1010,19 @@ func toolMsg(name string, args []byte) chatMsg {
 		m.Summary = ""
 	case "question":
 		m.Text = questionText(args)
+	case "shell":
+		// Claude explains each command in a few words; that reads better than the command.
+		var a struct {
+			Description string `json:"description"`
+		}
+		json.Unmarshal(args, &a)
+		m.Text = clip(strings.TrimSpace(a.Description), 240)
+	case "task":
+		var a struct {
+			Type string `json:"subagent_type"`
+		}
+		json.Unmarshal(args, &a)
+		m.Text = a.Type
 	}
 	return m
 }

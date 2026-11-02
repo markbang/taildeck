@@ -42,16 +42,12 @@ import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -75,12 +71,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.abs
 import kotlinx.coroutines.delay
 import top.bangwu.taildeck.ChatMessage
 import top.bangwu.taildeck.R
@@ -171,7 +165,7 @@ private fun toolIcon(kind: String): ImageVector = when (kind) {
 }
 
 @Composable
-private fun toolLabel(m: ChatMessage): String = when (m.kind) {
+internal fun toolLabel(m: ChatMessage): String = when (m.kind) {
     "shell" -> stringResource(R.string.tool_shell)
     "read" -> stringResource(R.string.tool_read)
     "edit" -> stringResource(R.string.tool_edit)
@@ -187,13 +181,23 @@ private fun toolLabel(m: ChatMessage): String = when (m.kind) {
 
 @Composable
 fun ToolRow(m: ChatMessage, ctx: ToolContext, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        ToolLine(m, ctx)
+        if (m.images.isNotEmpty()) ImageStrip(m.images, Modifier.padding(start = 30.dp, top = 2.dp, bottom = 4.dp))
+    }
+}
+
+@Composable
+private fun ToolLine(m: ChatMessage, ctx: ToolContext, modifier: Modifier = Modifier) {
+    // Claude describes each command in a few words; that reads better than the command itself.
+    val described = m.kind == "shell" && m.text.isNotEmpty()
     Row(
         modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { ctx.onOpen(m) }.padding(horizontal = 4.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
             when {
-                m.pending && ctx.live -> CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.8.dp)
+                (m.pending || m.background) && ctx.live -> CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.8.dp)
                 m.error -> Icon(Icons.Outlined.ErrorOutline, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
                 else -> Icon(toolIcon(m.kind), null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -202,10 +206,10 @@ fun ToolRow(m: ChatMessage, ctx: ToolContext, modifier: Modifier = Modifier) {
         Text(toolLabel(m), style = MaterialTheme.typography.labelLarge)
         Spacer(Modifier.width(8.dp))
         Text(
-            m.relativeSummary(ctx.cwd),
+            if (described) m.text else m.relativeSummary(ctx.cwd),
             Modifier.weight(1f),
             style = MaterialTheme.typography.bodySmall,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = if (described) null else FontFamily.Monospace,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -242,12 +246,20 @@ fun ToolGroup(row: ToolGroupRow, ctx: ToolContext, modifier: Modifier, item: @Co
             Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { open = !open }.padding(horizontal = 4.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            val running = if (row.open && ctx.live) row.items.lastOrNull { it.role == "tool" && it.pending } else null
             Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
-                if (row.open && ctx.live && row.items.any { it.pending }) CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.8.dp)
+                if (running != null) CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.8.dp)
                 else Icon(Icons.Outlined.Layers, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Spacer(Modifier.width(8.dp))
-            Text(groupSummary(row.items), Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                running?.let { "${toolLabel(it)} ${it.text.ifEmpty { it.relativeSummary(ctx.cwd) }}" } ?: groupSummary(row.items),
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             Icon(Icons.Outlined.ExpandMore, null, Modifier.size(18.dp).rotate(rotation), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         val shown = when {
@@ -255,6 +267,8 @@ fun ToolGroup(row: ToolGroupRow, ctx: ToolContext, modifier: Modifier, item: @Co
             row.open -> listOf(row.items.last())
             else -> emptyList()
         }
+        val images = row.items.flatMap { it.images }
+        if (!open && images.isNotEmpty()) ImageStrip(images, Modifier.padding(start = 30.dp, top = 2.dp))
         if (shown.isNotEmpty()) {
             Column(
                 Modifier.padding(start = 12.dp).drawBehind { drawLine(rail, Offset(0f, 0f), Offset(0f, size.height), 1.5.dp.toPx()) }.padding(start = 6.dp),
@@ -418,80 +432,6 @@ fun liveElapsed(since: Long): Long? {
     }
     val d = now - since
     return if (since > 0 && d in 0..86_400_000) d else null
-}
-
-// ---- prompts drawn by the agent's TUI while it waits (permission, questions) ----
-
-data class ScreenPrompt(val question: String?, val options: List<String>, val selected: Int)
-
-private const val BOX_CHARS = "│┃|╭╮╰╯─━┌┐└┘"
-private val OPTION = Regex("""^([❯›>▶→●]\s*)?(\d{1,2})[.)]\s+(.+)$""")
-private val KEY_HINT = Regex("""\s*\((esc|[a-z])\)$""")
-private val NEGATIVE = Regex("""^(no\b|deny|reject|cancel|否|不|拒绝|取消)""", RegexOption.IGNORE_CASE)
-
-/**
- * Finds the last numbered choice list on screen, as drawn by Claude Code,
- * Codex and similar TUIs. Wrapped descriptions between options are allowed.
- */
-fun parseScreenPrompt(screen: String): ScreenPrompt? {
-    val lines = screen.lines().map { it.trim().trim { c -> c in BOX_CHARS }.trim() }
-    var best: ScreenPrompt? = null
-    var start = -1
-    var options = ArrayList<String>()
-    var selected = -1
-    var gap = 0
-    lines.forEachIndexed { i, l ->
-        val m = OPTION.find(l)
-        val n = m?.groupValues?.get(2)?.toInt()
-        if (m != null && n == 1) {
-            start = i
-            options = arrayListOf()
-            selected = -1
-        }
-        if (m != null && start >= 0 && n == options.size + 1) {
-            if (m.groupValues[1].isNotEmpty()) selected = options.size
-            options += m.groupValues[3].replace(KEY_HINT, "").trim()
-            gap = 0
-            if (options.size >= 2) {
-                val above = lines.subList(maxOf(0, start - 8), start).filter { it.isNotBlank() }
-                val q = above.lastOrNull { it.endsWith("?") || it.endsWith("？") } ?: above.lastOrNull()
-                best = ScreenPrompt(q, options.toList(), selected)
-            }
-        } else if (start >= 0 && l.isNotEmpty() && ++gap > 3) {
-            start = -1
-        }
-    }
-    return best
-}
-
-/** Keys that pick option [i]: move the cursor when one is drawn, else type its number. */
-fun ScreenPrompt.keysFor(i: Int): List<String> {
-    if (selected < 0) return listOf("${i + 1}")
-    val d = i - selected
-    return List(abs(d)) { if (d > 0) "down" else "up" } + "enter"
-}
-
-@Composable
-fun PromptOptions(prompt: ScreenPrompt, enabled: Boolean, onPick: (List<String>) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        prompt.question?.let { Text(it, style = MaterialTheme.typography.titleSmall) }
-        prompt.options.forEachIndexed { i, label ->
-            val text = @Composable {
-                Text("${i + 1}. $label", Modifier.fillMaxWidth(), textAlign = TextAlign.Start, maxLines = 3, overflow = TextOverflow.Ellipsis)
-            }
-            val modifier = Modifier.fillMaxWidth()
-            when {
-                NEGATIVE.containsMatchIn(label) -> OutlinedButton(
-                    onClick = { onPick(prompt.keysFor(i)) },
-                    enabled = enabled,
-                    modifier = modifier,
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                ) { text() }
-                i == 0 -> Button(onClick = { onPick(prompt.keysFor(i)) }, enabled = enabled, modifier = modifier) { text() }
-                else -> FilledTonalButton(onClick = { onPick(prompt.keysFor(i)) }, enabled = enabled, modifier = modifier) { text() }
-            }
-        }
-    }
 }
 
 // ---- tracks above the composer: task list and context usage ----

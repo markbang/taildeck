@@ -35,6 +35,11 @@ type Herdr struct {
 
 	tmu         sync.Mutex
 	transcripts map[string]*transcript
+	windows     map[string]int // bytes of history read per pane, grown by TranscriptMore
+	images      *imageStore
+
+	smu      sync.Mutex
+	sessions map[string]*paneSession // sessions found from a pane's processes
 
 	done      chan struct{}
 	closeOnce sync.Once
@@ -60,7 +65,11 @@ func ConnectHerdr(host string, port int, user, password, keyPath, passphrase, ce
 	if err != nil {
 		return nil, err
 	}
-	h := &Herdr{client: client, listener: listener, transcripts: map[string]*transcript{}, done: make(chan struct{})}
+	h := &Herdr{
+		client: client, listener: listener, done: make(chan struct{}),
+		transcripts: map[string]*transcript{}, windows: map[string]int{},
+		images: newImageStore(), sessions: map[string]*paneSession{},
+	}
 	socket, err := h.findSocket()
 	if err != nil {
 		client.Close()

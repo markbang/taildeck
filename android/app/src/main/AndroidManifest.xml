@@ -48,6 +48,9 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps the in-app Tailscale node and its loopback gateway running for the user's browser" />
         </service>
+        <receiver
+            android:name=".AgentActionReceiver"
+            android:exported="false" />
     </application>
 
     <queries>

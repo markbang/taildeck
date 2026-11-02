@@ -51,31 +51,31 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.NotificationsOff
 import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.SmartToy
-import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
@@ -121,14 +121,17 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import top.bangwu.taildeck.AgentStatus
 import top.bangwu.taildeck.ChatMessage
 import top.bangwu.taildeck.HerdrAgent
+import top.bangwu.taildeck.HerdrHub
 import top.bangwu.taildeck.HerdrState
 import top.bangwu.taildeck.QueuedPrompt
 import top.bangwu.taildeck.R
@@ -218,6 +221,8 @@ fun HerdrSummary(node: String, onOpen: () -> Unit) {
 fun AgentsScreen(node: String, onBack: () -> Unit, onAgent: (String) -> Unit, onTerminal: () -> Unit) {
     val hub = TaildeckApp.instance.herdr
     val states by hub.states.collectAsStateWithLifecycle()
+    val unread by hub.unread.collectAsStateWithLifecycle()
+    val muted by hub.muted.collectAsStateWithLifecycle()
     val state = states[node]
     var refreshing by remember { mutableStateOf(false) }
     var creating by remember { mutableStateOf(false) }
@@ -261,16 +266,21 @@ fun AgentsScreen(node: String, onBack: () -> Unit, onAgent: (String) -> Unit, on
                         Centered(stringResource(R.string.agents_none))
                     } else {
                         LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 88.dp)) {
-                            state.agents.groupBy { it.workspace }.forEach { (ws, list) ->
-                                item(key = "ws:$ws") {
-                                    Text(
-                                        ws,
-                                        Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
-                                        style = MaterialTheme.typography.labelLarge,
-                                        color = MaterialTheme.colorScheme.primary,
-                                    )
+                            // Agents waiting on you, and finished ones you haven't opened, come first.
+                            val needsYou = state.agents.filter { it.status == AgentStatus.BLOCKED || it.status == AgentStatus.DONE && (node to it.paneId) in unread }
+                                .sortedBy { if (it.status == AgentStatus.BLOCKED) 0 else 1 }
+                            if (needsYou.isNotEmpty()) {
+                                item(key = "needs") { SectionHeader(stringResource(R.string.agents_needs_you)) }
+                                items(needsYou, key = { "n:" + it.paneId }) {
+                                    AgentRow(it, (node to it.paneId) in unread, Modifier.animateItem()) { onAgent(it.paneId) }
                                 }
-                                items(list, key = { it.paneId }) { AgentRow(it, Modifier.animateItem()) { onAgent(it.paneId) } }
+                            }
+                            state.agents.filterNot { it in needsYou }.groupBy { it.workspace }.forEach { (ws, list) ->
+                                item(key = "ws:$ws") {
+                                    val isMuted = top.bangwu.taildeck.Store.muteKey(node, ws) in muted
+                                    WorkspaceHeader(ws, isMuted) { hub.setMuted(node, ws, !isMuted) }
+                                }
+                                items(list, key = { it.paneId }) { AgentRow(it, (node to it.paneId) in unread, Modifier.animateItem()) { onAgent(it.paneId) } }
                             }
                         }
                     }
@@ -292,13 +302,49 @@ private fun Centered(text: String) {
 }
 
 @Composable
-private fun AgentRow(agent: HerdrAgent, modifier: Modifier, onClick: () -> Unit) {
+private fun SectionHeader(text: String, modifier: Modifier = Modifier) {
+    Text(text, modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun WorkspaceHeader(name: String, muted: Boolean, onToggleMute: () -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = { menu = true }).padding(end = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SectionHeader(name, Modifier.weight(1f, fill = false))
+            if (muted) {
+                Spacer(Modifier.width(6.dp))
+                Icon(Icons.Outlined.NotificationsOff, stringResource(R.string.agents_unmute), Modifier.padding(top = 12.dp).size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        DropdownMenu(menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(text = { Text(stringResource(if (muted) R.string.agents_unmute else R.string.agents_mute)) }, onClick = { menu = false; onToggleMute() })
+        }
+    }
+}
+
+@Composable
+private fun AgentRow(agent: HerdrAgent, unread: Boolean, modifier: Modifier, onClick: () -> Unit) {
     ListItem(
         modifier = modifier.clickable(onClick = onClick),
         leadingContent = { AgentDot(agent.status) },
         headlineContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(agent.label, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                Text(
+                    agent.label,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontWeight = if (unread) androidx.compose.ui.text.font.FontWeight.SemiBold else null,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (unread) {
+                    Spacer(Modifier.width(6.dp))
+                    Box(Modifier.size(7.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
+                }
                 Spacer(Modifier.width(8.dp))
                 StatusChip(agent.status)
             }
@@ -347,9 +393,19 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
     var fullscreen by rememberSaveable { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
+    var openSubagent by remember { mutableStateOf<String?>(null) }
+    var subagentList by remember { mutableStateOf(false) }
+    var restart by remember { mutableStateOf<Pair<RestartPhase, Long>?>(null) }
+    var statusLine by remember { mutableStateOf<StatusLine?>(null) }
+    var suggestion by remember { mutableStateOf<String?>(null) }
+    var commands by remember { mutableStateOf<List<HerdrHub.Command>>(emptyList()) }
+    var attachments by remember { mutableStateOf<List<Attachment>>(emptyList()) }
     val listState = rememberLazyListState()
+    val kind = agent?.kind.orEmpty()
     val live = status == AgentStatus.WORKING || status == AgentStatus.BLOCKED
-    val toolCtx = ToolContext(agent?.cwd, live) { openTool = it.id }
+    val toolCtx = ToolContext(agent?.cwd, live) {
+        if (it.kind == "task" && it.call.isNotEmpty() && kind == "claude") openSubagent = it.id else openTool = it.id
+    }
 
     DisposableEffect(node, pane) {
         hub.viewing = node to pane
@@ -432,18 +488,87 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
         }
     }
 
-    // While the agent works, sending queues on the phone; long-press sends now.
+    // Claude, Codex and pi hold what's typed while they work, so it goes
+    // straight to them; other agents get the phone's queue (long-press sends now).
+    val localQueue = status == AgentStatus.WORKING && !hub.queuesNatively(kind)
     fun send(now: Boolean = false) {
-        val text = draft.trim()
+        val paths = attachments.mapNotNull { it.path }
+        if (attachments.any { it.path == null && it.error == null }) return
+        val text = (listOf(draft.trim()) + paths).filter { it.isNotEmpty() }.joinToString("\n")
         if (text.isEmpty()) return
         draft = ""
+        attachments = emptyList()
         fullscreen = false
-        if (status == AgentStatus.WORKING && !now) {
+        suggestion = null
+        if (localQueue && !now) {
             hub.enqueue(node, pane, text)
             return
         }
         prompt(text)
     }
+
+    fun restartAgent(then: String?) {
+        restart = RestartPhase.Running to System.currentTimeMillis()
+        scope.launch {
+            runCatching { hub.restart(node, pane, then) }
+                .onSuccess { restart = null; reload(); snackbar.showSnackbar(context.getString(R.string.agent_restarted)) }
+                .onFailure { e -> restart = RestartPhase.Failed(e.message.orEmpty().substringAfter(": ")) to System.currentTimeMillis() }
+        }
+    }
+
+    // Claude's status line says what it's doing and for how long.
+    LaunchedEffect(status, kind) {
+        statusLine = null
+        while (status == AgentStatus.WORKING) {
+            runCatching { parseStatusLine(hub.screen(node, pane)) }.onSuccess { statusLine = it }
+            delay(2000)
+        }
+    }
+    // Claude shows a suggested next prompt, dimmed, in its empty input.
+    LaunchedEffect(status, kind) {
+        suggestion = null
+        if (kind != "claude" || !status.settled()) return@LaunchedEffect
+        for (wait in listOf(300L, 1200L, 2000L, 4500L)) {
+            delay(wait)
+            val next = runCatching { parseClaudeSuggestion(hub.screen(node, pane, ansi = true)) }.getOrNull()
+            suggestion = next
+            if (next != null) break
+        }
+    }
+    val wantsCommands = draft.startsWith("/")
+    LaunchedEffect(wantsCommands, kind) {
+        if (!wantsCommands) return@LaunchedEffect
+        val builtins = if (kind == "claude") CLAUDE_BUILTINS.map { HerdrHub.Command(it.first, it.second, "builtin") } else emptyList()
+        commands = builtins + runCatching { hub.commands(node, kind, agent?.cwd.orEmpty()) }.getOrDefault(emptyList())
+    }
+
+    fun attach(uris: List<android.net.Uri>) {
+        uris.take(6).forEach { uri ->
+            val id = System.nanoTime()
+            val resolver = context.contentResolver
+            val name = runCatching {
+                resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+            }.getOrNull() ?: "file"
+            attachments = attachments + Attachment(id, name, null)
+            scope.launch {
+                val result = runCatching {
+                    val data = withContext(Dispatchers.IO) { resolver.openInputStream(uri)?.use { it.readBytes() } } ?: error(context.getString(R.string.attach_unreadable))
+                    if (data.size > 30 shl 20) error(context.getString(R.string.attach_too_big, name))
+                    val thumb = withContext(Dispatchers.Default) {
+                        runCatching { android.graphics.BitmapFactory.decodeByteArray(data, 0, data.size, android.graphics.BitmapFactory.Options().apply { inSampleSize = 8 }) }.getOrNull()
+                    }
+                    attachments = attachments.map { if (it.id == id) it.copy(thumbnail = thumb) else it }
+                    hub.upload(node, name, data)
+                }
+                attachments = attachments.map {
+                    if (it.id != id) it else result.fold({ p -> it.copy(path = p) }, { e -> it.copy(error = e.message.orEmpty()) })
+                }
+                result.exceptionOrNull()?.let { snackbar.showSnackbar(it.message.orEmpty()) }
+            }
+        }
+    }
+    val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(6)) { attach(it) }
+    val pickFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { attach(it) }
 
     val voice = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         val heard = r.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull().orEmpty()
@@ -500,6 +625,16 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
                     IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
                     DropdownMenu(menu, onDismissRequest = { menu = false }) {
                         DropdownMenuItem(text = { Text(stringResource(R.string.agent_rename)) }, onClick = { menu = false; renaming = true })
+                        if (kind in setOf("claude", "codex", "pi", "omp")) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.agent_restart)) },
+                                onClick = { menu = false; restartAgent(null) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.agent_restart_continue)) },
+                                onClick = { menu = false; restartAgent(context.getString(R.string.agent_continue_prompt)) },
+                            )
+                        }
                         HorizontalDivider()
                         listOf(
                             ChatDisplay.FULL to R.string.chat_display_full,
@@ -517,6 +652,7 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
             )
         },
     ) { padding ->
+        androidx.compose.runtime.CompositionLocalProvider(LocalAgentNode provides node) {
         Column(Modifier.padding(padding).fillMaxSize().imePadding()) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 val t = transcript
@@ -537,10 +673,6 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            if (working) {
-                                val since = t.messages.lastOrNull { it.role == "user" }?.ts ?: 0L
-                                item(key = "working") { WorkingRow(agent?.label.orEmpty(), since, Modifier.animateItem()) }
-                            }
                             items(rows, key = { it.key }) { row ->
                                 when (row) {
                                     is MessageRow -> MessageView(row.m, toolCtx, Modifier.animateItem())
@@ -550,13 +682,29 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
                             }
                             if (t.matchedByDirectory || t.truncated) {
                                 item(key = "note") {
-                                    Text(
-                                        stringResource(if (t.matchedByDirectory) R.string.agent_matched_by_dir else R.string.agent_truncated),
-                                        Modifier.fillMaxWidth().padding(8.dp),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        textAlign = TextAlign.Center,
-                                    )
+                                    Column(Modifier.fillMaxWidth().padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        if (t.truncated) {
+                                            var loading by remember { mutableStateOf(false) }
+                                            TextButton(
+                                                enabled = !loading,
+                                                onClick = {
+                                                    loading = true
+                                                    scope.launch {
+                                                        if (runCatching { hub.transcriptMore(node, pane) }.getOrDefault(false)) reload()
+                                                        loading = false
+                                                    }
+                                                },
+                                            ) { Text(stringResource(R.string.agent_load_earlier)) }
+                                        }
+                                        if (t.matchedByDirectory) {
+                                            Text(
+                                                stringResource(R.string.agent_matched_by_dir),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                textAlign = TextAlign.Center,
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -572,10 +720,28 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
                 if (blocked) {
                     val msgs = transcript?.messages.orEmpty()
                     val pendingTool = msgs.drop(msgs.indexOfLast { it.role == "user" } + 1).lastOrNull { it.role == "tool" && it.pending }
-                    ApprovalPanel(screen, pendingTool, toolCtx, picking, onKeys = { keys(*it.toTypedArray()) }, onTerminal = onTerminal)
+                    PromptPanel(
+                        node, pane, screen, pendingTool, toolCtx,
+                        onScreen = { scope.launch { readScreen() } },
+                        onTerminal = onTerminal,
+                        onChanged = { scope.launch { snackbar.showSnackbar(context.getString(R.string.prompt_changed)) } },
+                    ) { TerminalKeys(screen, picking) { keys(*it.toTypedArray()) } }
                 } else {
                     Surface(color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.navigationBarsPadding()) {
                         Column(Modifier.animateContentSize(Motion.slow())) {
+                            val tr = transcript
+                            restart?.let { (phase, since) ->
+                                RestartBar(agent?.label ?: pane, phase, since, onDismiss = { restart = null }, onRetry = { restartAgent(null) })
+                            }
+                            if (status == AgentStatus.WORKING) {
+                                val running = tr?.messages?.lastOrNull { it.role == "tool" && it.pending }
+                                val activity = statusLine?.text ?: running?.let { "${toolLabel(it)} ${it.text.ifEmpty { it.relativeSummary(agent?.cwd) }}" }
+                                val since = statusLine?.elapsedMs?.let { System.currentTimeMillis() - it }
+                                    ?: tr?.messages?.lastOrNull { it.role == "user" && !it.queued }?.ts ?: 0L
+                                val subs = runningSubagents(tr)
+                                WorkingBar(activity, since, subs.size, onSubagents = { subagentList = true }, onStop = { keys("esc") })
+                            }
+                            AgentQueueStack(tr?.agentQueue.orEmpty())
                             QueueTrack(
                                 queued,
                                 onEdit = { q ->
@@ -583,30 +749,45 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
                                 },
                                 onSendNow = { q -> hub.dequeue(node, pane, q.id)?.let { prompt(it.text) } },
                             )
-                            val tr = transcript
-                            if (tr != null && (tr.todos.any { it.status != "completed" } || tr.contextUsed > 0)) {
-                                Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp).padding(top = 4.dp), verticalAlignment = Alignment.Top) {
-                                    TodoTrack(tr.todos, Modifier.weight(1f))
-                                    if (tr.todos.none { it.status != "completed" }) Spacer(Modifier.weight(1f))
-                                    ContextChip(tr.contextUsed, tr.contextWindow, tr.model)
-                                }
+                            if (tr != null && tr.todos.any { it.status != "completed" }) {
+                                TodoTrack(tr.todos, Modifier.padding(horizontal = 10.dp).padding(top = 4.dp))
                             }
+                            if (tr != null) {
+                                SessionInfoBar(tr.settings, tr.contextUsed, tr.contextWindow, canSwitch = kind == "claude") { cmd -> prompt(cmd) }
+                            }
+                            val s = suggestion
+                            if (s != null && draft.isBlank() && attachments.isEmpty()) {
+                                SuggestionChip(s, onSend = { suggestion = null; prompt(s) }, onEdit = { draft = s; suggestion = null })
+                            }
+                            CommandSuggestions(draft, commands) { draft = it }
+                            AttachmentStrip(attachments) { a -> attachments = attachments - a }
                             Composer(
                                 draft = draft,
                                 onDraft = { draft = it },
-                                sending = sending,
-                                working = status == AgentStatus.WORKING,
+                                sending = sending || attachments.any { it.path == null && it.error == null },
+                                queues = localQueue,
+                                hasAttachments = attachments.any { it.path != null },
                                 canVoice = canVoice,
                                 onSend = { send() },
                                 onSendNow = { send(now = true) },
-                                onStop = { keys("esc") },
                                 onVoice = { runCatching { voice.launch(voiceIntent) } },
                                 onFullscreen = { fullscreen = true },
+                                onPickImages = { pickImages.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                                onPickFiles = { pickFiles.launch(arrayOf("*/*")) },
                             )
                         }
                     }
                 }
             }
+        }
+        if (subagentList) {
+            SubagentListSheet(runningSubagents(transcript), onOpen = { subagentList = false; openSubagent = it.id }) { subagentList = false }
+        }
+        openSubagent?.let { id ->
+            transcript?.messages?.firstOrNull { it.id == id }?.let { task ->
+                SubagentSheet(node, pane, task, onDismiss = { openSubagent = null }) { m, ctx -> MessageView(m, ctx, Modifier) }
+            }
+        }
         }
         ToolSheetHost(transcript, openTool, agent?.cwd) { openTool = null }
     }
@@ -666,37 +847,55 @@ private fun ScreenView(text: String) {
     }
 }
 
-@Composable
-private fun WorkingRow(label: String, since: Long, modifier: Modifier) {
-    val t = rememberInfiniteTransition(label = "dots")
-    val phase = t.animateFloat(0f, 3f, infiniteRepeatable(tween(1200)), label = "p").value
-    Row(modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        repeat(3) { i ->
-            Box(Modifier.padding(end = 4.dp).size(6.dp).alpha(if (phase.toInt() == i) 1f else 0.3f).background(MaterialTheme.colorScheme.primary, CircleShape))
-        }
-        Spacer(Modifier.width(6.dp))
-        val elapsed = liveElapsed(since)?.let { " · " + durationLabel(it) }.orEmpty()
-        Text(stringResource(R.string.agent_working_on, label) + elapsed, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun MessageView(m: ChatMessage, toolCtx: ToolContext, modifier: Modifier) {
+internal fun MessageView(m: ChatMessage, toolCtx: ToolContext, modifier: Modifier) {
     val context = LocalContext.current
     when (m.role) {
-        "user" -> Box(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-            Surface(
-                color = MaterialTheme.colorScheme.primaryContainer,
-                shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp),
-                modifier = Modifier.widthIn(max = 320.dp).combinedClickable(onClick = {}, onLongClick = { context.copy(m.text) }),
-            ) {
-                Text(m.text, Modifier.padding(horizontal = 14.dp, vertical = 10.dp), color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodyLarge)
+        "user" -> Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            val images = m.images + imagePathsIn(m.text)
+            if (images.isNotEmpty()) ImageStrip(images, maxHeight = 200.dp)
+            if (m.text.isNotEmpty()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp),
+                    modifier = Modifier.widthIn(max = 320.dp).combinedClickable(onClick = {}, onLongClick = { context.copy(m.text) }),
+                ) {
+                    Text(m.text, Modifier.padding(horizontal = 14.dp, vertical = 10.dp), color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+            if (m.queued) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Schedule, null, Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.width(4.dp))
+                    Text(stringResource(R.string.agent_sent_while_working), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
-        "assistant" -> Box(modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = { context.copy(m.text) })) {
+        "assistant" -> Column(modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = { context.copy(m.text) }), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Markdown(m.text, Modifier.padding(end = 24.dp))
+            imagePathsIn(m.text).takeIf { it.isNotEmpty() }?.let { ImageStrip(it) }
         }
+        "command" -> CommandChip(m.text, modifier)
+        "output" -> CommandOutput(m.text, modifier)
+        "recap" -> NoteCard({ Icon(Icons.Outlined.Schedule, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) }, stringResource(R.string.agent_recap), m.text, modifier)
+        "teammate" -> NoteCard(
+            { Icon(Icons.Outlined.SmartToy, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary) },
+            stringResource(R.string.agent_teammate, m.from.ifEmpty { "?" }),
+            m.text,
+            modifier,
+            footer = m.summary,
+        )
+        "task" -> EventLine(m.text.ifEmpty { stringResource(R.string.agent_background_done) }, modifier, detail = m.output)
+        "system" -> EventLine(
+            when (m.kind) {
+                "interrupted" -> stringResource(R.string.agent_interrupted)
+                "compacted" -> stringResource(R.string.agent_compacted)
+                else -> m.text
+            },
+            modifier,
+            error = m.kind == "error",
+        )
         "thinking" -> Expandable(
             modifier = modifier,
             icon = { Icon(Icons.Outlined.Psychology, null, Modifier.size(16.dp)) },
@@ -766,21 +965,31 @@ private fun Composer(
     draft: String,
     onDraft: (String) -> Unit,
     sending: Boolean,
-    working: Boolean,
+    queues: Boolean,
+    hasAttachments: Boolean,
     canVoice: Boolean,
     onSend: () -> Unit,
     onSendNow: () -> Unit,
-    onStop: () -> Unit,
     onVoice: () -> Unit,
     onFullscreen: () -> Unit,
+    onPickImages: () -> Unit,
+    onPickFiles: () -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
+    var attachMenu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.Bottom) {
+        Box(Modifier.padding(bottom = 4.dp)) {
+            IconButton(onClick = { attachMenu = true }) { Icon(Icons.Outlined.Add, stringResource(R.string.attach)) }
+            DropdownMenu(attachMenu, onDismissRequest = { attachMenu = false }) {
+                DropdownMenuItem(text = { Text(stringResource(R.string.attach_image)) }, leadingIcon = { Icon(Icons.Outlined.Image, null) }, onClick = { attachMenu = false; onPickImages() })
+                DropdownMenuItem(text = { Text(stringResource(R.string.attach_file)) }, leadingIcon = { Icon(Icons.Outlined.AttachFile, null) }, onClick = { attachMenu = false; onPickFiles() })
+            }
+        }
         OutlinedTextField(
             draft,
             onDraft,
             modifier = Modifier.weight(1f).heightIn(max = 180.dp),
-            placeholder = { Text(stringResource(if (working) R.string.agent_queue_hint else R.string.agent_message_hint), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            placeholder = { Text(stringResource(if (queues) R.string.agent_queue_hint else R.string.agent_message_hint), maxLines = 1, overflow = TextOverflow.Ellipsis) },
             shape = RoundedCornerShape(22.dp),
             trailingIcon = when {
                 draft.isBlank() && canVoice -> { { IconButton(onClick = onVoice) { Icon(Icons.Outlined.Mic, stringResource(R.string.agent_voice)) } } }
@@ -789,95 +998,56 @@ private fun Composer(
             },
         )
         Spacer(Modifier.width(8.dp))
-        AnimatedVisibility(working && draft.isBlank(), enter = fadeIn(), exit = fadeOut()) {
-            FilledIconButton(onClick = onStop, modifier = Modifier.padding(bottom = 4.dp)) { Icon(Icons.Outlined.Stop, stringResource(R.string.agent_stop)) }
-        }
-        AnimatedVisibility(!working || draft.isNotBlank(), enter = fadeIn(), exit = fadeOut()) {
-            val enabled = draft.isNotBlank() && !sending
-            Box(
-                Modifier.padding(bottom = 4.dp).size(40.dp).clip(CircleShape)
-                    .background(if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
-                    .combinedClickable(
-                        enabled = enabled,
-                        role = androidx.compose.ui.semantics.Role.Button,
-                        onClickLabel = stringResource(if (working) R.string.agent_queue else R.string.agent_send),
-                        onLongClickLabel = if (working) stringResource(R.string.agent_send_now) else null,
-                        onClick = onSend,
-                        onLongClick = if (working) {
-                            {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onSendNow()
-                            }
-                        } else null,
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                val tint = if (enabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-                when {
-                    sending -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = tint)
-                    working -> Icon(Icons.Outlined.Schedule, null, tint = tint)
-                    else -> Icon(Icons.AutoMirrored.Filled.Send, null, tint = tint)
-                }
+        val enabled = (draft.isNotBlank() || hasAttachments) && !sending
+        Box(
+            Modifier.padding(bottom = 4.dp).size(40.dp).clip(CircleShape)
+                .background(if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+                .combinedClickable(
+                    enabled = enabled,
+                    role = androidx.compose.ui.semantics.Role.Button,
+                    onClickLabel = stringResource(if (queues) R.string.agent_queue else R.string.agent_send),
+                    onLongClickLabel = if (queues) stringResource(R.string.agent_send_now) else null,
+                    onClick = onSend,
+                    onLongClick = if (queues) {
+                        {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onSendNow()
+                        }
+                    } else null,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            val tint = if (enabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+            when {
+                sending -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = tint)
+                queues -> Icon(Icons.Outlined.Schedule, null, tint = tint)
+                else -> Icon(Icons.AutoMirrored.Filled.Send, null, tint = tint)
             }
         }
     }
 }
 
+/** The terminal's last lines and raw keys, for prompts the parser can't read. */
 @Composable
-private fun ApprovalPanel(screen: String, tool: ChatMessage?, toolCtx: ToolContext, picking: Boolean, onKeys: (List<String>) -> Unit, onTerminal: () -> Unit) {
-    val prompt = remember(screen) { parseScreenPrompt(screen) }
-    var showKeys by rememberSaveable { mutableStateOf(false) }
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.navigationBarsPadding()) {
-        Column(Modifier.fillMaxWidth().heightIn(max = 480.dp).verticalScroll(rememberScrollState()).padding(12.dp).animateContentSize(Motion.slow())) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                AgentDot(AgentStatus.BLOCKED)
-                Spacer(Modifier.width(8.dp))
-                Text(stringResource(R.string.agent_needs_you), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                OutlinedButton(onClick = onTerminal) { Text(stringResource(R.string.ssh)) }
+private fun TerminalKeys(screen: String, picking: Boolean, onKeys: (List<String>) -> Unit) {
+    Column {
+        if (screen.isNotBlank()) {
+            Spacer(Modifier.size(8.dp))
+            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    screen.lines().takeLast(18).joinToString("\n"),
+                    Modifier.padding(10.dp).horizontalScroll(rememberScrollState()),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.5.sp,
+                    softWrap = false,
+                )
             }
-            if (tool != null) {
-                Spacer(Modifier.size(8.dp))
-                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(horizontal = 6.dp, vertical = 2.dp)) {
-                        // The call waits on the user, so no progress spinner here.
-                        ToolRow(tool, ToolContext(toolCtx.cwd, live = false, toolCtx.onOpen))
-                        when {
-                            tool.diff.isNotEmpty() -> DiffView(tool.diff, maxLines = 14)
-                            // The bridge appends the remaining arguments as an indented JSON object.
-                            tool.kind == "shell" && tool.input.isNotEmpty() -> CodeBlock(tool.input.substringBeforeLast("\n{\n"), maxLines = 8)
-                        }
-                        if (tool.diff.isNotEmpty() || tool.kind == "shell") Spacer(Modifier.size(6.dp))
-                    }
-                }
-            }
-            val terminal = prompt == null || showKeys
-            if (prompt != null) {
-                Spacer(Modifier.size(10.dp))
-                PromptOptions(prompt, enabled = !picking, onPick = onKeys)
-                TextButton(onClick = { showKeys = !showKeys }) {
-                    Text(stringResource(if (showKeys) R.string.agent_hide_terminal_keys else R.string.agent_terminal_keys))
-                }
-            }
-            if (terminal && screen.isNotBlank()) {
-                Spacer(Modifier.size(8.dp))
-                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        screen.lines().takeLast(18).joinToString("\n"),
-                        Modifier.padding(10.dp).horizontalScroll(rememberScrollState()),
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.5.sp,
-                        softWrap = false,
-                    )
-                }
-            }
-            if (terminal) {
-                Spacer(Modifier.size(8.dp))
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    APPROVAL_KEYS.forEach { (label, key) ->
-                        FilledTonalButton(onClick = { onKeys(listOf(key)) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp)) {
-                            Text(label, fontFamily = FontFamily.Monospace)
-                        }
-                    }
+        }
+        Spacer(Modifier.size(8.dp))
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            APPROVAL_KEYS.forEach { (label, key) ->
+                FilledTonalButton(onClick = { onKeys(listOf(key)) }, enabled = !picking, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp)) {
+                    Text(label, fontFamily = FontFamily.Monospace)
                 }
             }
         }

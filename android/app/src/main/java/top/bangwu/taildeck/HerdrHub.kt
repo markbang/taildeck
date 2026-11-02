@@ -27,6 +27,8 @@ import org.json.JSONObject
 import top.bangwu.taildeck.tsbridge.Herdr
 import top.bangwu.taildeck.tsbridge.HerdrListener
 import top.bangwu.taildeck.tsbridge.Tsbridge
+import top.bangwu.taildeck.ui.ScreenPrompt
+import top.bangwu.taildeck.ui.parsePrompt
 
 enum class AgentStatus { WORKING, BLOCKED, DONE, IDLE, UNKNOWN;
     fun settled() = this == DONE || this == IDLE
@@ -74,9 +76,20 @@ data class ChatMessage(
     val kind: String,
     val summary: String,
     val diff: String,
+    val call: String = "",
+    val images: List<String> = emptyList(),
+    val from: String = "",
+    val queued: Boolean = false,
+    val background: Boolean = false,
 )
 
 data class Todo(val text: String, val status: String)
+
+/** Model, effort and mode a Claude session runs with, read from its transcript. */
+data class AgentSettings(val model: String = "", val effort: String = "", val permissionMode: String = "", val gitBranch: String = "")
+
+/** A prompt the agent itself holds while it works (Claude's queue-operation entries). */
+data class AgentQueued(val id: String, val text: String)
 
 data class QueuedPrompt(val id: Long, val text: String)
 
@@ -90,7 +103,8 @@ data class Transcript(
     val todos: List<Todo> = emptyList(),
     val contextUsed: Long = 0,
     val contextWindow: Long = 0,
-    val model: String = "",
+    val settings: AgentSettings = AgentSettings(),
+    val agentQueue: List<AgentQueued> = emptyList(),
 ) {
     companion object {
         fun parse(json: String): Transcript {
@@ -98,6 +112,9 @@ data class Transcript(
             val arr = o.optJSONArray("messages") ?: JSONArray()
             val todos = o.optJSONArray("todos") ?: JSONArray()
             val ctx = o.optJSONObject("context")
+            val set = o.optJSONObject("settings")
+            val queued = o.optJSONArray("queued") ?: JSONArray()
+            fun strings(a: JSONArray?) = if (a == null) emptyList() else (0 until a.length()).map { a.getString(it) }
             return Transcript(
                 screenMode = o.optString("mode") == "screen",
                 screen = o.optString("screen"),
@@ -111,12 +128,20 @@ data class Transcript(
                         name = m.optString("name"), input = m.optString("input"), output = m.optString("output"),
                         error = m.optBoolean("error"), pending = m.optBoolean("pending"),
                         ts = m.optLong("ts"), kind = m.optString("kind"), summary = m.optString("summary"), diff = m.optString("diff"),
+                        call = m.optString("call"), images = strings(m.optJSONArray("images")), from = m.optString("from"),
+                        queued = m.optBoolean("queued"), background = m.optBoolean("background"),
                     )
                 },
                 todos = (0 until todos.length()).map { todos.getJSONObject(it).let { t -> Todo(t.optString("text"), t.optString("status")) } },
                 contextUsed = ctx?.optLong("used") ?: 0,
                 contextWindow = ctx?.optLong("window") ?: 0,
-                model = o.optString("model"),
+                settings = AgentSettings(
+                    model = set?.optString("model").orEmpty().ifEmpty { o.optString("model") },
+                    effort = set?.optString("effort").orEmpty(),
+                    permissionMode = set?.optString("permission_mode").orEmpty(),
+                    gitBranch = set?.optString("git_branch").orEmpty(),
+                ),
+                agentQueue = (0 until queued.length()).map { queued.getJSONObject(it).let { q -> AgentQueued(q.optString("id"), q.optString("text")) } },
             )
         }
     }
@@ -147,6 +172,26 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
 
     /** Pane currently open in the chat screen; it doesn't get notifications. */
     @Volatile var viewing: Pair<String, String>? = null
+        set(v) {
+            field = v
+            if (v != null) markRead(v.first, v.second)
+        }
+
+    private val _unread = MutableStateFlow<Set<Pair<String, String>>>(emptySet())
+    /** Agents that finished or asked something since they were last opened. */
+    val unread: StateFlow<Set<Pair<String, String>>> = _unread
+
+    fun markRead(node: String, pane: String) = _unread.update { it - (node to pane) }
+
+    private val _muted = MutableStateFlow(TaildeckApp.instance.store.mutedWorkspaces())
+    val muted: StateFlow<Set<String>> = _muted
+
+    fun setMuted(node: String, workspace: String, muted: Boolean) {
+        TaildeckApp.instance.store.setWorkspaceMuted(node, workspace, muted)
+        _muted.value = TaildeckApp.instance.store.mutedWorkspaces()
+    }
+
+    fun isMuted(node: String, workspace: String) = Store.muteKey(node, workspace) in _muted.value
 
     /** Connects if needed. Profiles without usable credentials are ignored. */
     fun ensure(node: String, profile: SshProfile) {
@@ -243,7 +288,11 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
         _changes.tryEmit(node)
         for (a in agents) {
             val before = previous[a.paneId]?.status ?: continue
-            if (a.status != before && (a.status == AgentStatus.BLOCKED || a.status == AgentStatus.DONE)) notify(node, a)
+            if (a.status != before && (a.status == AgentStatus.BLOCKED || a.status == AgentStatus.DONE)) {
+                val looking = viewing == node to a.paneId && TaildeckApp.instance.foreground
+                if (!looking) _unread.update { it + (node to a.paneId) }
+                if (!looking && !isMuted(node, a.workspace)) notify(node, a)
+            }
             if (a.status != before && a.status.settled()) flushQueue(node, a.paneId)
         }
     }
@@ -273,9 +322,83 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
         JSONObject(h.call(method, params.toString()))
     }
 
+    private suspend fun conn(node: String): Herdr = lock.withLock { conns[node] } ?: error("herdr is not connected")
+
     suspend fun transcript(node: String, pane: String): Transcript = withContext(Dispatchers.IO) {
-        val h = lock.withLock { conns[node] } ?: error("herdr is not connected")
-        Transcript.parse(h.transcript(pane))
+        Transcript.parse(conn(node).transcript(pane))
+    }
+
+    /** Reads further back next time; false when the whole session is already shown. */
+    suspend fun transcriptMore(node: String, pane: String): Boolean = withContext(Dispatchers.IO) { conn(node).transcriptMore(pane) }
+
+    suspend fun subagent(node: String, pane: String, call: String): Pair<Transcript, JSONObject?> = withContext(Dispatchers.IO) {
+        val json = conn(node).subagent(pane, call)
+        Transcript.parse(json) to JSONObject(json).optJSONObject("agent")
+    }
+
+    /** Quits the agent and opens the same session again, then sends [then] if given. */
+    suspend fun restart(node: String, pane: String, then: String?) = withContext(Dispatchers.IO) {
+        try {
+            conn(node).restartAgent(pane, then.orEmpty())
+        } finally {
+            refresh(node)
+        }
+    }
+
+    suspend fun screen(node: String, pane: String, ansi: Boolean = false): String {
+        val p = JSONObject().put("target", pane).put("source", "visible").put("lines", 60)
+        if (ansi) p.put("strip_ansi", false)
+        return call(node, "agent.read", p).optJSONObject("read")?.optString("text").orEmpty()
+    }
+
+    suspend fun sendText(node: String, pane: String, text: String) {
+        call(node, "pane.send_text", JSONObject().put("pane_id", pane).put("text", text))
+    }
+
+    suspend fun sendKeys(node: String, pane: String, keys: List<String>) {
+        call(node, "agent.send_keys", JSONObject().put("target", pane).put("keys", JSONArray(keys)))
+    }
+
+    private val bytes = object : android.util.LruCache<String, ByteArray>(24 shl 20) {
+        override fun sizeOf(key: String, value: ByteArray) = value.size
+    }
+
+    /** An image from a transcript ("img:<id>") or a file the agent named on the node. */
+    suspend fun image(node: String, ref: String): ByteArray = withContext(Dispatchers.IO) {
+        val key = "$node\u0000$ref"
+        bytes.get(key) ?: run {
+            val h = conn(node)
+            val b = if (ref.startsWith("img:")) h.image(ref) else h.readFile(ref, 20L shl 20)
+            b.also { bytes.put(key, it) }
+        }
+    }
+
+    suspend fun upload(node: String, name: String, data: ByteArray): String = withContext(Dispatchers.IO) { conn(node).upload(name, data) }
+
+    data class Command(val name: String, val description: String, val source: String)
+
+    private val commandCache = HashMap<String, Pair<Long, List<Command>>>()
+
+    /** Prompt commands and skills for an agent of [kind] in [cwd], cached for a minute. */
+    suspend fun commands(node: String, kind: String, cwd: String): List<Command> = withContext(Dispatchers.IO) {
+        val key = "$node|$kind|$cwd"
+        commandCache[key]?.takeIf { System.currentTimeMillis() - it.first < 60_000 }?.let { return@withContext it.second }
+        val arr = JSONArray(conn(node).commands(kind, cwd))
+        val list = (0 until arr.length()).map { arr.getJSONObject(it).let { c -> Command(c.optString("name"), c.optString("description"), c.optString("source")) } }
+        commandCache[key] = System.currentTimeMillis() to list
+        list
+    }
+
+    /** Waits for the node's herdr connection, opening it from the saved SSH profile. */
+    private suspend fun awaitConnected(node: String): Boolean {
+        if (lock.withLock { conns[node] } != null) return true
+        val profile = profiles[node] ?: TaildeckApp.instance.store.sshProfile(node) ?: return false
+        ensure(node, profile)
+        repeat(30) {
+            delay(500)
+            if (lock.withLock { conns[node] } != null) return true
+        }
+        return false
     }
 
     fun enqueue(node: String, pane: String, text: String) {
@@ -297,6 +420,9 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
     suspend fun prompt(node: String, pane: String, text: String) {
         call(node, "agent.prompt", JSONObject().put("target", pane).put("text", text))
     }
+
+    /** These agents hold prompts typed while they work themselves, so the phone sends right away. */
+    fun queuesNatively(kind: String) = kind in setOf("claude", "codex", "pi", "omp")
 
     // One prompt per settle: the agent starts working again and the next waits.
     private suspend fun flushQueue(node: String, pane: String) {
@@ -351,29 +477,105 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
     // ---- notifications for agents that need attention ----
 
     @android.annotation.SuppressLint("MissingPermission")
-    private fun notify(node: String, agent: HerdrAgent) {
-        if (viewing == node to agent.paneId && TaildeckApp.instance.foreground) return
+    private suspend fun notify(node: String, agent: HerdrAgent) {
         val nm = context.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CHANNEL, context.getString(R.string.agents_channel), NotificationManager.IMPORTANCE_HIGH))
-        val intent = Intent(context, MainActivity::class.java)
-            .putExtra(MainActivity.EXTRA_ROUTE, Routes.agent(node, agent.paneId))
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        val id = (node + agent.paneId).hashCode()
-        val pending = PendingIntent.getActivity(context, id, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val id = notificationId(node, agent.paneId)
         val text = context.getString(if (agent.status == AgentStatus.BLOCKED) R.string.agent_needs_you else R.string.agent_finished)
-        val n = NotificationCompat.Builder(context, CHANNEL)
+        val b = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat)
             .setContentTitle("${agent.label} · $node")
             .setContentText(agent.title?.let { "$text · $it" } ?: text)
-            .setContentIntent(pending)
+            .setContentIntent(openIntent(node, agent.paneId))
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+        if (agent.status == AgentStatus.BLOCKED) {
+            // Allow/Deny only for a plain yes/no prompt; the screen it was read
+            // from travels along so the answer is checked against it first.
+            val seen = runCatching { screen(node, agent.paneId) }.getOrDefault("")
+            val prompt = parsePrompt(seen)
+            if (prompt != null && yesIndex(prompt) >= 0 && noIndex(prompt) >= 0) {
+                prompt.question?.let { b.setContentText(it) }
+                b.addAction(0, context.getString(R.string.agent_allow), actionIntent(node, agent.paneId, AgentActionReceiver.ALLOW, seen))
+                b.addAction(0, context.getString(R.string.agent_deny), actionIntent(node, agent.paneId, AgentActionReceiver.DENY, seen))
+            }
+        } else {
+            val input = androidx.core.app.RemoteInput.Builder(AgentActionReceiver.REPLY_TEXT).setLabel(context.getString(R.string.agent_reply)).build()
+            b.addAction(
+                NotificationCompat.Action.Builder(0, context.getString(R.string.agent_reply), actionIntent(node, agent.paneId, AgentActionReceiver.REPLY, null, mutable = true))
+                    .addRemoteInput(input).build(),
+            )
+        }
+        runCatching { NotificationManagerCompat.from(context).notify(id, b.build()) }
+    }
+
+    fun notificationId(node: String, pane: String) = (node + pane).hashCode()
+
+    private fun openIntent(node: String, pane: String): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java)
+            .putExtra(MainActivity.EXTRA_ROUTE, Routes.agent(node, pane))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        return PendingIntent.getActivity(context, notificationId(node, pane), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+    }
+
+    private fun actionIntent(node: String, pane: String, action: String, screen: String?, mutable: Boolean = false): PendingIntent {
+        val intent = Intent(context, AgentActionReceiver::class.java).setAction(action)
+            .setData(android.net.Uri.parse("taildeck-agent://$action/${android.net.Uri.encode(node)}/${android.net.Uri.encode(pane)}"))
+            .putExtra(AgentActionReceiver.NODE, node).putExtra(AgentActionReceiver.PANE, pane)
+            .putExtra(AgentActionReceiver.SCREEN, screen?.takeLast(16_000))
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or if (mutable) PendingIntent.FLAG_MUTABLE else PendingIntent.FLAG_IMMUTABLE
+        return PendingIntent.getBroadcast(context, notificationId(node, pane) + action.hashCode(), intent, flags)
+    }
+
+    private fun yesIndex(p: ScreenPrompt) = p.options.indexOfFirst { it.number == "1" && YES.containsMatchIn(it.label) }
+    private fun noIndex(p: ScreenPrompt) = p.options.indexOfFirst { NO.containsMatchIn(it.label) }
+
+    /**
+     * Answers a prompt from its notification, but only if the screen still
+     * shows the question the notification was made from.
+     */
+    fun answerFromNotification(node: String, pane: String, allow: Boolean, seen: String) = scope.launch {
+        val ok = runCatching {
+            if (!awaitConnected(node)) return@runCatching false
+            val then = parsePrompt(seen) ?: return@runCatching false
+            val now = parsePrompt(screen(node, pane)) ?: return@runCatching false
+            if (!now.sameQuestion(then)) return@runCatching false
+            val i = if (allow) yesIndex(now) else noIndex(now)
+            if (i < 0) return@runCatching false
+            sendKeys(node, pane, now.moveTo(now.rowOf(i))?.plus("enter") ?: listOf(now.options[i].number))
+            true
+        }.getOrDefault(false)
+        settleNotification(node, pane, if (ok) null else context.getString(R.string.agent_answer_failed))
+    }
+
+    fun replyFromNotification(node: String, pane: String, text: String) = scope.launch {
+        val ok = runCatching { awaitConnected(node) && run { prompt(node, pane, text); true } }.getOrDefault(false)
+        settleNotification(node, pane, if (ok) null else context.getString(R.string.agent_reply_failed))
+    }
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun settleNotification(node: String, pane: String, failure: String?) {
+        val nm = NotificationManagerCompat.from(context)
+        val id = notificationId(node, pane)
+        if (failure == null) {
+            nm.cancel(id)
+            refreshNow(node)
+            return
+        }
+        val n = NotificationCompat.Builder(context, CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat)
+            .setContentTitle(failure)
+            .setContentText(context.getString(R.string.agent_open_to_answer))
+            .setContentIntent(openIntent(node, pane))
+            .setAutoCancel(true)
             .build()
-        runCatching { NotificationManagerCompat.from(context).notify(id, n) }
+        runCatching { nm.notify(id, n) }
     }
 
     private companion object {
         const val TAG = "HerdrHub"
         const val CHANNEL = "agents"
+        val YES = Regex("^(Yes|Allow|Approve|Proceed)\\b", RegexOption.IGNORE_CASE)
+        val NO = Regex("^(No|Deny|Reject|Cancel)\\b", RegexOption.IGNORE_CASE)
     }
 }

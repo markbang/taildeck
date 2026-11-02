@@ -74,6 +74,13 @@ class Store(context: Context) {
         if (text.isBlank()) remove("draft:$node:$pane") else putString("draft:$node:$pane", text)
     }.apply()
 
+    fun mutedWorkspaces(): Set<String> = prefs.getStringSet("mutedWorkspaces", emptySet()).orEmpty().toSet()
+
+    fun setWorkspaceMuted(node: String, workspace: String, muted: Boolean) {
+        val next = mutedWorkspaces().let { if (muted) it + muteKey(node, workspace) else it - muteKey(node, workspace) }
+        prefs.edit().putStringSet("mutedWorkspaces", next).apply()
+    }
+
     private val _chatDisplay = MutableStateFlow(prefs.getString("chatDisplay", "tools") ?: "tools")
     /** full, tools (group runs of tool calls) or turns (fold answered turns). */
     val chatDisplay: StateFlow<String> = _chatDisplay
@@ -84,6 +91,8 @@ class Store(context: Context) {
     }
 
     companion object {
+        fun muteKey(node: String, workspace: String) = "$node\u0000$workspace"
+
         // Fixed so gateway URLs stay bookmarkable across restarts.
         const val DEFAULT_GATEWAY_PORT = 18680
     }
