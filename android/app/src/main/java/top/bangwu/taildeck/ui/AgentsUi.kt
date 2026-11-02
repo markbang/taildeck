@@ -44,9 +44,6 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.outlined.Build
-import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.SmartToy
@@ -65,6 +62,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -294,7 +292,10 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
     var screen by remember { mutableStateOf("") }
     var draft by rememberSaveable { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
+    var openTool by rememberSaveable { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
+    val live = status == AgentStatus.WORKING || status == AgentStatus.BLOCKED
+    val toolCtx = ToolContext(agent?.cwd, live) { openTool = it.id }
 
     DisposableEffect(node, pane) {
         hub.viewing = node to pane
@@ -316,20 +317,30 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
             delay(if (status == AgentStatus.WORKING) 1200 else 4000)
         }
     }
+    var picking by remember { mutableStateOf(false) }
+    suspend fun readScreen() {
+        screen = runCatching {
+            hub.call(node, "agent.read", JSONObject().put("target", pane).put("source", "visible").put("lines", 60))
+                .optJSONObject("read")?.optString("text").orEmpty()
+        }.getOrDefault(screen).lines().dropLastWhile { it.isBlank() }.joinToString("\n")
+    }
+
+    // The TUI may finish drawing its prompt after the status flips, so keep reading.
     LaunchedEffect(status) {
-        if (status == AgentStatus.BLOCKED) {
-            screen = runCatching {
-                hub.call(node, "agent.read", JSONObject().put("target", pane).put("source", "visible").put("lines", 40))
-                    .optJSONObject("read")?.optString("text").orEmpty()
-            }.getOrDefault("").lines().dropLastWhile { it.isBlank() }.takeLast(18).joinToString("\n")
+        while (status == AgentStatus.BLOCKED) {
+            readScreen()
+            delay(1500)
         }
     }
 
     fun keys(vararg k: String) = scope.launch {
+        picking = true
         runCatching { hub.call(node, "agent.send_keys", JSONObject().put("target", pane).put("keys", JSONArray(k.toList()))) }
             .onFailure { snackbar.showSnackbar(it.message.orEmpty()) }
         delay(400)
         hub.refreshNow(node)
+        readScreen()
+        picking = false
     }
 
     fun send() {
@@ -380,7 +391,8 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
                     t == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                     t.screenMode -> ScreenView(t.screen)
                     else -> {
-                        val items = remember(t.messages) { t.messages.asReversed() }
+                        val working = status == AgentStatus.WORKING
+                        val rows = remember(t.messages, working) { buildRows(t.messages, working).asReversed() }
                         LazyColumn(
                             state = listState,
                             reverseLayout = true,
@@ -388,8 +400,17 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 12.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            if (status == AgentStatus.WORKING) item(key = "working") { WorkingRow(agent?.label.orEmpty(), Modifier.animateItem()) }
-                            items(items, key = { it.id }) { MessageView(it, Modifier.animateItem()) }
+                            if (working) {
+                                val since = t.messages.lastOrNull { it.role == "user" }?.ts ?: 0L
+                                item(key = "working") { WorkingRow(agent?.label.orEmpty(), since, Modifier.animateItem()) }
+                            }
+                            items(rows, key = { it.key }) { row ->
+                                when (row) {
+                                    is MessageRow -> MessageView(row.m, toolCtx, Modifier.animateItem())
+                                    is ToolGroupRow -> ToolGroup(row, toolCtx, Modifier.animateItem()) { MessageView(it, toolCtx, Modifier) }
+                                    is TurnFooterRow -> TurnFooter(row, Modifier.animateItem())
+                                }
+                            }
                             if (t.matchedByDirectory || t.truncated) {
                                 item(key = "note") {
                                     Text(
@@ -411,7 +432,9 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
                 label = "composer",
             ) { blocked ->
                 if (blocked) {
-                    ApprovalPanel(screen, onKey = { keys(it) }, onTerminal = onTerminal)
+                    val msgs = transcript?.messages.orEmpty()
+                    val pendingTool = msgs.drop(msgs.indexOfLast { it.role == "user" } + 1).lastOrNull { it.role == "tool" && it.pending }
+                    ApprovalPanel(screen, pendingTool, toolCtx, picking, onKeys = { keys(*it.toTypedArray()) }, onTerminal = onTerminal)
                 } else {
                     Composer(
                         draft = draft,
@@ -424,7 +447,14 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
                 }
             }
         }
+        ToolSheetHost(transcript, openTool, agent?.cwd) { openTool = null }
     }
+}
+
+@Composable
+private fun ToolSheetHost(transcript: Transcript?, id: String?, cwd: String?, onDismiss: () -> Unit) {
+    val m = id?.let { i -> transcript?.messages?.firstOrNull { it.id == i } } ?: return
+    ToolSheet(m, cwd, onDismiss)
 }
 
 @Composable
@@ -449,7 +479,7 @@ private fun ScreenView(text: String) {
 }
 
 @Composable
-private fun WorkingRow(label: String, modifier: Modifier) {
+private fun WorkingRow(label: String, since: Long, modifier: Modifier) {
     val t = rememberInfiniteTransition(label = "dots")
     val phase = t.animateFloat(0f, 3f, infiniteRepeatable(tween(1200)), label = "p").value
     Row(modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -457,13 +487,14 @@ private fun WorkingRow(label: String, modifier: Modifier) {
             Box(Modifier.padding(end = 4.dp).size(6.dp).alpha(if (phase.toInt() == i) 1f else 0.3f).background(MaterialTheme.colorScheme.primary, CircleShape))
         }
         Spacer(Modifier.width(6.dp))
-        Text(stringResource(R.string.agent_working_on, label), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val elapsed = liveElapsed(since)?.let { " · " + durationLabel(it) }.orEmpty()
+        Text(stringResource(R.string.agent_working_on, label) + elapsed, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun MessageView(m: ChatMessage, modifier: Modifier) {
+private fun MessageView(m: ChatMessage, toolCtx: ToolContext, modifier: Modifier) {
     val context = LocalContext.current
     when (m.role) {
         "user" -> Box(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
@@ -486,26 +517,7 @@ private fun MessageView(m: ChatMessage, modifier: Modifier) {
         ) {
             Text(m.text, style = MaterialTheme.typography.bodySmall, fontStyle = FontStyle.Italic, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        "tool" -> Expandable(
-            modifier = modifier,
-            icon = {
-                when {
-                    m.pending -> CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                    m.error -> Icon(Icons.Outlined.ErrorOutline, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
-                    m.output.isNotEmpty() -> Icon(Icons.Outlined.CheckCircle, null, Modifier.size(16.dp), tint = OnlineGreen)
-                    else -> Icon(Icons.Outlined.Build, null, Modifier.size(16.dp))
-                }
-            },
-            title = m.name.ifEmpty { "tool" },
-            summary = m.input.lineSequence().firstOrNull().orEmpty(),
-            monospaceSummary = true,
-        ) {
-            if (m.input.isNotEmpty()) CodeBlock(m.input, stringResource(R.string.agent_tool_input), maxLines = 40)
-            if (m.output.isNotEmpty()) {
-                Spacer(Modifier.size(6.dp))
-                CodeBlock(m.output, stringResource(R.string.agent_tool_output), maxLines = 60)
-            }
-        }
+        "tool" -> ToolRow(m, toolCtx, modifier)
         else -> Text(
             m.text,
             modifier.fillMaxWidth().padding(vertical = 2.dp),
@@ -586,20 +598,43 @@ private fun Composer(draft: String, onDraft: (String) -> Unit, sending: Boolean,
 }
 
 @Composable
-private fun ApprovalPanel(screen: String, onKey: (String) -> Unit, onTerminal: () -> Unit) {
+private fun ApprovalPanel(screen: String, tool: ChatMessage?, toolCtx: ToolContext, picking: Boolean, onKeys: (List<String>) -> Unit, onTerminal: () -> Unit) {
+    val prompt = remember(screen) { parseScreenPrompt(screen) }
+    var showKeys by rememberSaveable { mutableStateOf(false) }
     Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, modifier = Modifier.navigationBarsPadding()) {
-        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 480.dp).verticalScroll(rememberScrollState()).padding(12.dp).animateContentSize(Motion.slow())) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 AgentDot(AgentStatus.BLOCKED)
                 Spacer(Modifier.width(8.dp))
                 Text(stringResource(R.string.agent_needs_you), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                 OutlinedButton(onClick = onTerminal) { Text(stringResource(R.string.ssh)) }
             }
-            if (screen.isNotBlank()) {
+            if (tool != null) {
                 Spacer(Modifier.size(8.dp))
-                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp)) {
+                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(horizontal = 6.dp, vertical = 2.dp)) {
+                        ToolRow(tool, toolCtx)
+                        when {
+                            tool.diff.isNotEmpty() -> DiffView(tool.diff, maxLines = 14)
+                            tool.kind == "shell" && tool.input.isNotEmpty() -> CodeBlock(tool.input, maxLines = 8)
+                        }
+                        if (tool.diff.isNotEmpty() || tool.kind == "shell") Spacer(Modifier.size(6.dp))
+                    }
+                }
+            }
+            val terminal = prompt == null || showKeys
+            if (prompt != null) {
+                Spacer(Modifier.size(10.dp))
+                PromptOptions(prompt, enabled = !picking, onPick = onKeys)
+                TextButton(onClick = { showKeys = !showKeys }) {
+                    Text(stringResource(if (showKeys) R.string.agent_hide_terminal_keys else R.string.agent_terminal_keys))
+                }
+            }
+            if (terminal && screen.isNotBlank()) {
+                Spacer(Modifier.size(8.dp))
+                Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        screen,
+                        screen.lines().takeLast(18).joinToString("\n"),
                         Modifier.padding(10.dp).horizontalScroll(rememberScrollState()),
                         fontFamily = FontFamily.Monospace,
                         fontSize = 11.5.sp,
@@ -607,11 +642,13 @@ private fun ApprovalPanel(screen: String, onKey: (String) -> Unit, onTerminal: (
                     )
                 }
             }
-            Spacer(Modifier.size(8.dp))
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                APPROVAL_KEYS.forEach { (label, key) ->
-                    FilledTonalButton(onClick = { onKey(key) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp)) {
-                        Text(label, fontFamily = FontFamily.Monospace)
+            if (terminal) {
+                Spacer(Modifier.size(8.dp))
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    APPROVAL_KEYS.forEach { (label, key) ->
+                        FilledTonalButton(onClick = { onKeys(listOf(key)) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp)) {
+                            Text(label, fontFamily = FontFamily.Monospace)
+                        }
                     }
                 }
             }

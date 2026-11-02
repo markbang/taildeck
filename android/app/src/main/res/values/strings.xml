@@ -174,4 +174,41 @@
     <string name="agent_queue_hint">Queue a message</string>
     <string name="agent_stop">Interrupt</string>
     <string name="agent_send">Send</string>
+    <string name="agent_tool_error">Error</string>
+    <string name="agent_copy_turn">Copy reply</string>
+    <string name="agent_worked_for">Worked for %1$s</string>
+    <string name="agent_terminal_keys">Terminal and keys</string>
+    <string name="agent_hide_terminal_keys">Hide terminal</string>
+    <string name="duration_s">%1$ds</string>
+    <string name="duration_ms">%1$dm %2$ds</string>
+    <string name="duration_hm">%1$dh %2$dm</string>
+    <string name="list_separator">", "</string>
+    <string name="tool_shell">Run</string>
+    <string name="tool_read">Read</string>
+    <string name="tool_edit">Edit</string>
+    <string name="tool_write">Write</string>
+    <string name="tool_search">Search</string>
+    <string name="tool_fetch">Fetch</string>
+    <string name="tool_task">Subagent</string>
+    <string name="tool_todo">Update tasks</string>
+    <plurals name="tools_edited">
+        <item quantity="one">edited %d file</item>
+        <item quantity="other">edited %d files</item>
+    </plurals>
+    <plurals name="tools_read">
+        <item quantity="one">read %d file</item>
+        <item quantity="other">read %d files</item>
+    </plurals>
+    <plurals name="tools_ran">
+        <item quantity="one">ran %d command</item>
+        <item quantity="other">ran %d commands</item>
+    </plurals>
+    <plurals name="tools_searched">
+        <item quantity="one">searched %d time</item>
+        <item quantity="other">searched %d times</item>
+    </plurals>
+    <plurals name="tools_other">
+        <item quantity="one">used %d other tool</item>
+        <item quantity="other">used %d other tools</item>
+    </plurals>
 </resources>

@@ -20,6 +20,10 @@ type chatMsg struct {
 	Output  string `json:"output,omitempty"`
 	Error   bool   `json:"error,omitempty"`
 	Pending bool   `json:"pending,omitempty"`
+	TS      int64  `json:"ts,omitempty"`      // unix ms
+	Kind    string `json:"kind,omitempty"`    // tools: shell, read, edit, write, search, fetch, task, todo, other
+	Summary string `json:"summary,omitempty"` // tools: the one argument that says what the call does
+	Diff    string `json:"diff,omitempty"`    // edits and writes, as +/- lines
 }
 
 type piEntry struct {
@@ -39,6 +43,7 @@ type transcript struct {
 
 	msgs  []chatMsg
 	tools map[string]int // tool call id -> index in msgs
+	ts    int64          // timestamp of the line being parsed
 
 	pi     []piEntry
 	piByID map[string]int
@@ -240,14 +245,19 @@ func (t *transcript) add(m chatMsg) {
 		return
 	}
 	m.Text = clip(m.Text, maxText)
+	if m.TS == 0 {
+		m.TS = t.ts
+	}
 	if m.ID == "" {
 		m.ID = fmt.Sprint(len(t.msgs))
 	}
 	t.msgs = append(t.msgs, m)
 }
 
-func (t *transcript) addTool(id, name, input string) {
-	t.add(chatMsg{ID: "tool:" + id + fmt.Sprint(len(t.msgs)), Role: "tool", Name: name, Input: clip(input, maxToolText), Pending: true})
+func (t *transcript) addTool(id, name string, args []byte) {
+	m := toolMsg(name, args)
+	m.ID = "tool:" + id + fmt.Sprint(len(t.msgs))
+	t.add(m)
 	if id != "" {
 		t.tools[id] = len(t.msgs) - 1
 	}
@@ -285,11 +295,12 @@ func (t *transcript) render(matched string) (string, error) {
 
 func (t *transcript) piLine(line []byte) {
 	var e struct {
-		Type     string          `json:"type"`
-		ID       string          `json:"id"`
-		ParentID *string         `json:"parentId"`
-		Message  json.RawMessage `json:"message"`
-		Summary  string          `json:"summary"`
+		Type      string          `json:"type"`
+		ID        string          `json:"id"`
+		ParentID  *string         `json:"parentId"`
+		Message   json.RawMessage `json:"message"`
+		Summary   string          `json:"summary"`
+		Timestamp json.RawMessage `json:"timestamp"`
 	}
 	if json.Unmarshal(line, &e) != nil || e.ID == "" {
 		return
@@ -304,6 +315,12 @@ func (t *transcript) piLine(line []byte) {
 	case "compaction", "branch_summary":
 		if e.Summary != "" {
 			pe.msgs = []chatMsg{{ID: e.ID, Role: "system", Text: e.Summary}}
+		}
+	}
+	ts := parseTS(e.Timestamp)
+	for i := range pe.msgs {
+		if pe.msgs[i].TS == 0 {
+			pe.msgs[i].TS = ts
 		}
 	}
 	t.piByID[e.ID] = len(t.pi)
@@ -321,10 +338,17 @@ func piMessage(id string, raw json.RawMessage) (msgs, results []chatMsg) {
 		ExitCode   *int            `json:"exitCode"`
 		Summary    string          `json:"summary"`
 		Display    *bool           `json:"display"`
+		Timestamp  json.RawMessage `json:"timestamp"`
 	}
 	if json.Unmarshal(raw, &m) != nil {
 		return nil, nil
 	}
+	defer func() {
+		ts := parseTS(m.Timestamp)
+		for i := range msgs {
+			msgs[i].TS = ts
+		}
+	}()
 	switch m.Role {
 	case "user":
 		return []chatMsg{{ID: id, Role: "user", Text: contentText(m.Content)}}, nil
@@ -346,7 +370,9 @@ func piMessage(id string, raw json.RawMessage) (msgs, results []chatMsg) {
 			case "thinking":
 				msgs = append(msgs, chatMsg{ID: bid, Role: "thinking", Text: b.Thinking})
 			case "toolCall":
-				msgs = append(msgs, chatMsg{ID: "call:" + b.ID, Role: "tool", Name: b.Name, Input: toolInput(b.Arguments), Pending: true})
+				tm := toolMsg(b.Name, b.Arguments)
+				tm.ID = "call:" + b.ID
+				msgs = append(msgs, tm)
 			}
 		}
 		return msgs, nil
@@ -354,7 +380,7 @@ func piMessage(id string, raw json.RawMessage) (msgs, results []chatMsg) {
 		return nil, []chatMsg{{Name: m.ToolCallID, Output: contentText(m.Content), Error: m.IsError}}
 	case "bashExecution":
 		out := m.Output
-		return []chatMsg{{ID: id, Role: "tool", Name: "bash", Input: m.Command, Output: out, Error: m.ExitCode != nil && *m.ExitCode != 0}}, nil
+		return []chatMsg{{ID: id, Role: "tool", Name: "bash", Kind: "shell", Summary: firstLine(m.Command), Input: m.Command, Output: out, Error: m.ExitCode != nil && *m.ExitCode != 0}}, nil
 	case "custom":
 		if m.Display != nil && *m.Display {
 			return []chatMsg{{ID: id, Role: "system", Text: contentText(m.Content)}}, nil
@@ -419,12 +445,14 @@ func (t *transcript) claudeLine(line []byte) {
 			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
 		} `json:"message"`
-		Subtype string `json:"subtype"`
-		Content string `json:"content"`
+		Subtype   string          `json:"subtype"`
+		Content   string          `json:"content"`
+		Timestamp json.RawMessage `json:"timestamp"`
 	}
 	if json.Unmarshal(line, &e) != nil || e.IsSidechain || e.IsMeta {
 		return
 	}
+	t.ts = parseTS(e.Timestamp)
 	switch e.Type {
 	case "user":
 		var s string
@@ -466,7 +494,7 @@ func (t *transcript) claudeLine(line []byte) {
 			case "thinking":
 				t.add(chatMsg{ID: id, Role: "thinking", Text: b.Thinking})
 			case "tool_use":
-				t.addTool(b.ID, b.Name, toolInput(b.Input))
+				t.addTool(b.ID, b.Name, b.Input)
 			}
 		}
 	case "system":
@@ -504,8 +532,9 @@ func claudeCleanUser(s string) string {
 
 func (t *transcript) codexLine(line []byte) {
 	var e struct {
-		Type    string `json:"type"`
-		Payload struct {
+		Type      string          `json:"type"`
+		Timestamp json.RawMessage `json:"timestamp"`
+		Payload   struct {
 			Type      string          `json:"type"`
 			Message   string          `json:"message"`
 			Text      string          `json:"text"`
@@ -523,6 +552,7 @@ func (t *transcript) codexLine(line []byte) {
 		return
 	}
 	p := e.Payload
+	t.ts = parseTS(e.Timestamp)
 	switch e.Type + "/" + p.Type {
 	case "event_msg/user_message":
 		t.add(chatMsg{Role: "user", Text: p.Message})
@@ -531,11 +561,12 @@ func (t *transcript) codexLine(line []byte) {
 	case "event_msg/agent_reasoning":
 		t.add(chatMsg{Role: "thinking", Text: p.Text})
 	case "response_item/function_call":
-		t.addTool(p.CallID, p.Name, toolInput(json.RawMessage(p.Arguments)))
+		t.addTool(p.CallID, p.Name, []byte(p.Arguments))
 	case "response_item/custom_tool_call":
-		t.addTool(p.CallID, p.Name, p.Input)
+		t.addTool(p.CallID, p.Name, []byte(p.Input))
 	case "response_item/local_shell_call":
-		t.addTool(p.CallID, "shell", strings.Join(p.Action.Command, " "))
+		args, _ := json.Marshal(map[string]any{"command": p.Action.Command})
+		t.addTool(p.CallID, "shell", args)
 	case "response_item/function_call_output", "response_item/custom_tool_call_output", "response_item/local_shell_call_output":
 		out := codexOutput(p.Output)
 		t.toolResult(p.CallID, out, false)
@@ -592,6 +623,166 @@ func contentText(raw json.RawMessage) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func toolMsg(name string, args []byte) chatMsg {
+	kind, summary, diff := describeTool(name, args)
+	return chatMsg{
+		Role: "tool", Name: name, Input: clip(toolInput(args), maxToolText), Pending: true,
+		Kind: kind, Summary: clip(firstLine(summary), 240), Diff: clip(diff, maxToolText),
+	}
+}
+
+// describeTool maps the tool names of Claude Code, Codex and pi onto a few
+// kinds the app can label, picking the argument that identifies the call.
+func describeTool(name string, raw []byte) (kind, summary, diff string) {
+	var a map[string]any
+	if json.Unmarshal(raw, &a) != nil {
+		a = nil
+	}
+	str := func(keys ...string) string {
+		for _, k := range keys {
+			switch v := a[k].(type) {
+			case string:
+				if v != "" {
+					return v
+				}
+			case []any:
+				return shellArgs(v)
+			}
+		}
+		return ""
+	}
+	switch strings.ToLower(name) {
+	case "bash", "shell", "local_shell", "exec_command", "shell_command", "bashoutput", "killshell", "write_stdin":
+		return "shell", str("command", "cmd", "bash_id", "shell_id"), ""
+	case "read", "ls", "view_image", "notebookread":
+		return "read", str("file_path", "path", "notebook_path"), ""
+	case "edit", "multiedit", "notebookedit":
+		path := str("file_path", "path", "notebook_path")
+		if edits, ok := a["edits"].([]any); ok {
+			var parts []string
+			for _, e := range edits {
+				if m, ok := e.(map[string]any); ok {
+					parts = append(parts, lineDiff(strAny(m, "old_string", "oldText"), strAny(m, "new_string", "newText")))
+				}
+			}
+			return "edit", path, strings.Join(parts, "@@\n")
+		}
+		return "edit", path, lineDiff(str("old_string", "oldText"), str("new_string", "newText", "new_source"))
+	case "write":
+		return "write", str("file_path", "path"), lineDiff("", str("content"))
+	case "apply_patch":
+		patch := str("input", "patch")
+		if a == nil {
+			patch = string(raw)
+		}
+		return "edit", patchFiles(patch), patch
+	case "grep", "glob", "find", "search", "websearch", "web_search":
+		return "search", str("pattern", "query"), ""
+	case "webfetch", "fetch":
+		return "fetch", str("url"), ""
+	case "task", "agent":
+		return "task", str("description", "prompt"), ""
+	case "todowrite", "update_plan":
+		return "todo", "", ""
+	}
+	return "other", str("command", "file_path", "path", "pattern", "url", "query", "description"), ""
+}
+
+func strAny(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if s, ok := m[k].(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// shellArgs shows ["bash","-lc","cmd"] as just cmd.
+func shellArgs(v []any) string {
+	var p []string
+	for _, x := range v {
+		p = append(p, fmt.Sprint(x))
+	}
+	if len(p) == 3 && (p[1] == "-lc" || p[1] == "-c") {
+		return p[2]
+	}
+	return strings.Join(p, " ")
+}
+
+// lineDiff renders a replacement as +/- lines, keeping shared leading and
+// trailing lines as context.
+func lineDiff(old, new string) string {
+	if old == "" && new == "" {
+		return ""
+	}
+	var a, b []string
+	if old != "" {
+		a = strings.Split(old, "\n")
+	}
+	if new != "" {
+		b = strings.Split(new, "\n")
+	}
+	pre := 0
+	for pre < len(a) && pre < len(b) && a[pre] == b[pre] {
+		pre++
+	}
+	suf := 0
+	for suf < len(a)-pre && suf < len(b)-pre && a[len(a)-1-suf] == b[len(b)-1-suf] {
+		suf++
+	}
+	var out strings.Builder
+	for _, l := range a[:pre] {
+		out.WriteString(" " + l + "\n")
+	}
+	for _, l := range a[pre : len(a)-suf] {
+		out.WriteString("-" + l + "\n")
+	}
+	for _, l := range b[pre : len(b)-suf] {
+		out.WriteString("+" + l + "\n")
+	}
+	for _, l := range a[len(a)-suf:] {
+		out.WriteString(" " + l + "\n")
+	}
+	return strings.TrimSuffix(out.String(), "\n")
+}
+
+var patchFile = regexp.MustCompile(`(?m)^\*\*\* (?:Update|Add|Delete) File: (.+)$`)
+
+func patchFiles(patch string) string {
+	var files []string
+	for _, m := range patchFile.FindAllStringSubmatch(patch, -1) {
+		files = append(files, strings.TrimSpace(m[1]))
+	}
+	return strings.Join(files, ", ")
+}
+
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i] + " …"
+	}
+	return s
+}
+
+// parseTS accepts RFC 3339 strings and unix seconds or milliseconds.
+func parseTS(raw json.RawMessage) int64 {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+			return t.UnixMilli()
+		}
+		return 0
+	}
+	var n float64
+	if json.Unmarshal(raw, &n) == nil && n > 0 {
+		if n < 1e12 {
+			n *= 1000
+		}
+		return int64(n)
+	}
+	return 0
 }
 
 // toolInput shows the most telling argument (command, path, ...) first.

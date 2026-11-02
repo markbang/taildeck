@@ -69,6 +69,10 @@ data class ChatMessage(
     val output: String,
     val error: Boolean,
     val pending: Boolean,
+    val ts: Long,
+    val kind: String,
+    val summary: String,
+    val diff: String,
 )
 
 data class Transcript(
@@ -95,6 +99,7 @@ data class Transcript(
                         id = m.optString("id"), role = m.optString("role"), text = m.optString("text"),
                         name = m.optString("name"), input = m.optString("input"), output = m.optString("output"),
                         error = m.optBoolean("error"), pending = m.optBoolean("pending"),
+                        ts = m.optLong("ts"), kind = m.optString("kind"), summary = m.optString("summary"), diff = m.optString("diff"),
                     )
                 },
             )
