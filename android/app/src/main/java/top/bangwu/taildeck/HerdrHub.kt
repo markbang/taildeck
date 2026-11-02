@@ -29,6 +29,7 @@ import top.bangwu.taildeck.tsbridge.HerdrListener
 import top.bangwu.taildeck.tsbridge.Tsbridge
 
 enum class AgentStatus { WORKING, BLOCKED, DONE, IDLE, UNKNOWN;
+    fun settled() = this == DONE || this == IDLE
     companion object {
         fun of(s: String) = when (s) {
             "working" -> WORKING
@@ -75,6 +76,10 @@ data class ChatMessage(
     val diff: String,
 )
 
+data class Todo(val text: String, val status: String)
+
+data class QueuedPrompt(val id: Long, val text: String)
+
 data class Transcript(
     val screenMode: Boolean,
     val screen: String,
@@ -82,11 +87,17 @@ data class Transcript(
     val matchedByDirectory: Boolean,
     val truncated: Boolean,
     val messages: List<ChatMessage>,
+    val todos: List<Todo> = emptyList(),
+    val contextUsed: Long = 0,
+    val contextWindow: Long = 0,
+    val model: String = "",
 ) {
     companion object {
         fun parse(json: String): Transcript {
             val o = JSONObject(json)
             val arr = o.optJSONArray("messages") ?: JSONArray()
+            val todos = o.optJSONArray("todos") ?: JSONArray()
+            val ctx = o.optJSONObject("context")
             return Transcript(
                 screenMode = o.optString("mode") == "screen",
                 screen = o.optString("screen"),
@@ -102,6 +113,10 @@ data class Transcript(
                         ts = m.optLong("ts"), kind = m.optString("kind"), summary = m.optString("summary"), diff = m.optString("diff"),
                     )
                 },
+                todos = (0 until todos.length()).map { todos.getJSONObject(it).let { t -> Todo(t.optString("text"), t.optString("status")) } },
+                contextUsed = ctx?.optLong("used") ?: 0,
+                contextWindow = ctx?.optLong("window") ?: 0,
+                model = o.optString("model"),
             )
         }
     }
@@ -124,6 +139,11 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
     private val _changes = MutableSharedFlow<String>(extraBufferCapacity = 16)
     /** Emits a node name whenever that node's herdr state changed. */
     val changes: SharedFlow<String> = _changes
+
+    private val _queues = MutableStateFlow<Map<Pair<String, String>, List<QueuedPrompt>>>(emptyMap())
+    /** Prompts held on the phone until their agent stops working. */
+    val queues: StateFlow<Map<Pair<String, String>, List<QueuedPrompt>>> = _queues
+    private var queueSeq = 0L
 
     /** Pane currently open in the chat screen; it doesn't get notifications. */
     @Volatile var viewing: Pair<String, String>? = null
@@ -224,6 +244,7 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
         for (a in agents) {
             val before = previous[a.paneId]?.status ?: continue
             if (a.status != before && (a.status == AgentStatus.BLOCKED || a.status == AgentStatus.DONE)) notify(node, a)
+            if (a.status != before && a.status.settled()) flushQueue(node, a.paneId)
         }
     }
 
@@ -255,6 +276,63 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
     suspend fun transcript(node: String, pane: String): Transcript = withContext(Dispatchers.IO) {
         val h = lock.withLock { conns[node] } ?: error("herdr is not connected")
         Transcript.parse(h.transcript(pane))
+    }
+
+    fun enqueue(node: String, pane: String, text: String) {
+        _queues.update { it + ((node to pane) to it[node to pane].orEmpty() + QueuedPrompt(++queueSeq, text)) }
+        val status = (_states.value[node] as? HerdrState.Ready)?.agents?.firstOrNull { it.paneId == pane }?.status
+        if (status?.settled() == true) scope.launch { flushQueue(node, pane) }
+    }
+
+    fun dequeue(node: String, pane: String, id: Long): QueuedPrompt? {
+        var found: QueuedPrompt? = null
+        _queues.update { all ->
+            val list = all[node to pane].orEmpty()
+            found = list.firstOrNull { it.id == id }
+            all + ((node to pane) to list.filterNot { it.id == id })
+        }
+        return found
+    }
+
+    suspend fun prompt(node: String, pane: String, text: String) {
+        call(node, "agent.prompt", JSONObject().put("target", pane).put("text", text))
+    }
+
+    // One prompt per settle: the agent starts working again and the next waits.
+    private suspend fun flushQueue(node: String, pane: String) {
+        val next = _queues.value[node to pane]?.firstOrNull() ?: return
+        runCatching { prompt(node, pane, next.text) }
+            .onSuccess { dequeue(node, pane, next.id) }
+            .onFailure { Log.w(TAG, "queued prompt: ${it.message}") }
+    }
+
+    suspend fun workspaces(node: String): List<Pair<String, String>> {
+        val arr = call(node, "workspace.list", JSONObject()).optJSONArray("workspaces") ?: JSONArray()
+        return (0 until arr.length()).map {
+            val w = arr.getJSONObject(it)
+            w.optString("workspace_id") to w.optString("label").ifEmpty { w.optString("workspace_id") }
+        }
+    }
+
+    /** Opens a tab (or a new workspace) and starts [kind] in it; returns the pane id. */
+    suspend fun startAgent(node: String, kind: String, name: String, workspaceId: String?, cwd: String?): String {
+        val params = JSONObject().put("label", name)
+        if (!cwd.isNullOrBlank()) params.put("cwd", cwd.trim())
+        val created = if (workspaceId == null) call(node, "workspace.create", params)
+        else call(node, "tab.create", params.put("workspace_id", workspaceId))
+        val pane = created.getJSONObject("root_pane").getString("pane_id")
+        runCatching { call(node, "agent.start", JSONObject().put("name", name).put("kind", kind).put("pane_id", pane)) }
+            .onFailure {
+                runCatching { call(node, "pane.close", JSONObject().put("pane_id", pane)) }
+                throw it
+            }
+        refresh(node)
+        return pane
+    }
+
+    suspend fun rename(node: String, pane: String, name: String?) {
+        call(node, "agent.rename", JSONObject().put("target", pane).put("name", name ?: JSONObject.NULL))
+        refresh(node)
     }
 
     fun closeAll() {

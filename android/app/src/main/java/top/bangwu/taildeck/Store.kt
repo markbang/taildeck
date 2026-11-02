@@ -68,6 +68,21 @@ class Store(context: Context) {
     fun saveSshProfile(node: String, profile: SshProfile) =
         prefs.edit().putString("ssh:$node", profile.toJson().toString()).apply()
 
+    fun draft(node: String, pane: String): String = prefs.getString("draft:$node:$pane", "") ?: ""
+
+    fun saveDraft(node: String, pane: String, text: String) = prefs.edit().apply {
+        if (text.isBlank()) remove("draft:$node:$pane") else putString("draft:$node:$pane", text)
+    }.apply()
+
+    private val _chatDisplay = MutableStateFlow(prefs.getString("chatDisplay", "tools") ?: "tools")
+    /** full, tools (group runs of tool calls) or turns (fold answered turns). */
+    val chatDisplay: StateFlow<String> = _chatDisplay
+
+    fun setChatDisplay(v: String) {
+        prefs.edit().putString("chatDisplay", v).apply()
+        _chatDisplay.value = v
+    }
+
     companion object {
         // Fixed so gateway URLs stay bookmarkable across restarts.
         const val DEFAULT_GATEWAY_PORT = 18680

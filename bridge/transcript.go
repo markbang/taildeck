@@ -26,10 +26,17 @@ type chatMsg struct {
 	Diff    string `json:"diff,omitempty"`    // edits and writes, as +/- lines
 }
 
+type todoItem struct {
+	Text   string `json:"text"`
+	Status string `json:"status"` // pending, in_progress, completed
+}
+
 type piEntry struct {
 	id, parent string
 	msgs       []chatMsg
 	results    []chatMsg // tool results keyed by Name=toolCallId
+	used       int64
+	model      string
 }
 
 // transcript incrementally parses one agent's native session file.
@@ -44,6 +51,11 @@ type transcript struct {
 	msgs  []chatMsg
 	tools map[string]int // tool call id -> index in msgs
 	ts    int64          // timestamp of the line being parsed
+
+	todos  []todoItem
+	used   int64 // tokens in context after the latest model call
+	window int64 // context window, when the agent records it
+	model  string
 
 	pi     []piEntry
 	piByID map[string]int
@@ -257,6 +269,9 @@ func (t *transcript) add(m chatMsg) {
 func (t *transcript) addTool(id, name string, args []byte) {
 	m := toolMsg(name, args)
 	m.ID = "tool:" + id + fmt.Sprint(len(t.msgs))
+	if todos, ok := parseTodos(name, args); ok {
+		t.todos = todos
+	}
 	t.add(m)
 	if id != "" {
 		t.tools[id] = len(t.msgs) - 1
@@ -273,8 +288,9 @@ func (t *transcript) toolResult(id, output string, isErr bool) {
 
 func (t *transcript) render(matched string) (string, error) {
 	msgs := t.msgs
+	used, model := t.used, t.model
 	if t.kind == "pi" {
-		msgs = t.piPath()
+		msgs, used, model = t.piPath()
 	}
 	truncated := t.truncated
 	if len(msgs) > maxMessages {
@@ -286,7 +302,8 @@ func (t *transcript) render(matched string) (string, error) {
 	}
 	b, err := json.Marshal(map[string]any{
 		"mode": "transcript", "source": t.kind, "file": t.file, "matched": matched,
-		"truncated": truncated, "messages": msgs,
+		"truncated": truncated, "messages": msgs, "todos": t.todos, "model": model,
+		"context": map[string]int64{"used": used, "window": t.window},
 	})
 	return string(b), err
 }
@@ -312,6 +329,19 @@ func (t *transcript) piLine(line []byte) {
 	switch e.Type {
 	case "message":
 		pe.msgs, pe.results = piMessage(e.ID, e.Message)
+		var u struct {
+			Model string `json:"model"`
+			Usage struct {
+				Input, Output, CacheRead, CacheWrite, TotalTokens int64
+			} `json:"usage"`
+		}
+		if json.Unmarshal(e.Message, &u) == nil {
+			pe.model = u.Model
+			pe.used = u.Usage.TotalTokens
+			if pe.used == 0 {
+				pe.used = u.Usage.Input + u.Usage.Output + u.Usage.CacheRead + u.Usage.CacheWrite
+			}
+		}
 	case "compaction", "branch_summary":
 		if e.Summary != "" {
 			pe.msgs = []chatMsg{{ID: e.ID, Role: "system", Text: e.Summary}}
@@ -391,9 +421,9 @@ func piMessage(id string, raw json.RawMessage) (msgs, results []chatMsg) {
 	return nil, nil
 }
 
-func (t *transcript) piPath() []chatMsg {
+func (t *transcript) piPath() (msgs []chatMsg, used int64, model string) {
 	if len(t.pi) == 0 {
-		return nil
+		return nil, 0, ""
 	}
 	var chain []int
 	seen := map[int]bool{}
@@ -408,6 +438,12 @@ func (t *transcript) piPath() []chatMsg {
 	calls := map[string]int{}
 	for k := len(chain) - 1; k >= 0; k-- {
 		e := t.pi[chain[k]]
+		if e.used > 0 {
+			used = e.used
+		}
+		if e.model != "" {
+			model = e.model
+		}
 		for _, m := range e.msgs {
 			m.Text = clip(m.Text, maxText)
 			m.Input = clip(m.Input, maxToolText)
@@ -430,7 +466,7 @@ func (t *transcript) piPath() []chatMsg {
 			filtered = append(filtered, m)
 		}
 	}
-	return filtered
+	return filtered, used, model
 }
 
 // ---- Claude Code: one JSON object per content block, tool results in user turns ----
@@ -444,6 +480,13 @@ func (t *transcript) claudeLine(line []byte) {
 		Message     struct {
 			Role    string          `json:"role"`
 			Content json.RawMessage `json:"content"`
+			Model   string          `json:"model"`
+			Usage   *struct {
+				Input       int64 `json:"input_tokens"`
+				CacheCreate int64 `json:"cache_creation_input_tokens"`
+				CacheRead   int64 `json:"cache_read_input_tokens"`
+				Output      int64 `json:"output_tokens"`
+			} `json:"usage"`
 		} `json:"message"`
 		Subtype   string          `json:"subtype"`
 		Content   string          `json:"content"`
@@ -477,6 +520,12 @@ func (t *transcript) claudeLine(line []byte) {
 			}
 		}
 	case "assistant":
+		if u := e.Message.Usage; u != nil {
+			t.used = u.Input + u.CacheCreate + u.CacheRead + u.Output
+		}
+		if e.Message.Model != "" && !strings.HasPrefix(e.Message.Model, "<") {
+			t.model = e.Message.Model
+		}
 		var blocks []struct {
 			Type     string          `json:"type"`
 			Text     string          `json:"text"`
@@ -546,6 +595,13 @@ func (t *transcript) codexLine(line []byte) {
 			Action    struct {
 				Command []string `json:"command"`
 			} `json:"action"`
+			Model string `json:"model"`
+			Info  *struct {
+				Last struct {
+					Total int64 `json:"total_tokens"`
+				} `json:"last_token_usage"`
+				Window int64 `json:"model_context_window"`
+			} `json:"info"`
 		} `json:"payload"`
 	}
 	if json.Unmarshal(line, &e) != nil {
@@ -554,6 +610,14 @@ func (t *transcript) codexLine(line []byte) {
 	p := e.Payload
 	t.ts = parseTS(e.Timestamp)
 	switch e.Type + "/" + p.Type {
+	case "turn_context/":
+		if p.Model != "" {
+			t.model = p.Model
+		}
+	case "event_msg/token_count":
+		if p.Info != nil {
+			t.used, t.window = p.Info.Last.Total, p.Info.Window
+		}
 	case "event_msg/user_message":
 		t.add(chatMsg{Role: "user", Text: p.Message})
 	case "event_msg/agent_message":
@@ -627,10 +691,83 @@ func contentText(raw json.RawMessage) string {
 
 func toolMsg(name string, args []byte) chatMsg {
 	kind, summary, diff := describeTool(name, args)
-	return chatMsg{
+	m := chatMsg{
 		Role: "tool", Name: name, Input: clip(toolInput(args), maxToolText), Pending: true,
 		Kind: kind, Summary: clip(firstLine(summary), 240), Diff: clip(diff, maxToolText),
 	}
+	switch kind {
+	case "plan":
+		m.Text = summary
+		m.Summary = ""
+	case "question":
+		m.Text = questionText(args)
+	}
+	return m
+}
+
+// questionText renders AskUserQuestion's questions and options as Markdown.
+func questionText(args []byte) string {
+	var a struct {
+		Questions []struct {
+			Question string `json:"question"`
+			Header   string `json:"header"`
+			Options  []struct {
+				Label       string `json:"label"`
+				Description string `json:"description"`
+			} `json:"options"`
+		} `json:"questions"`
+	}
+	if json.Unmarshal(args, &a) != nil {
+		return ""
+	}
+	var b strings.Builder
+	for i, q := range a.Questions {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("**" + q.Question + "**")
+		for _, o := range q.Options {
+			b.WriteString("\n- " + o.Label)
+			if o.Description != "" {
+				b.WriteString(" — " + o.Description)
+			}
+		}
+	}
+	return b.String()
+}
+
+// parseTodos reads the task list Claude Code (TodoWrite) and Codex
+// (update_plan) rewrite in full on every call.
+func parseTodos(name string, args []byte) ([]todoItem, bool) {
+	var a struct {
+		Todos []struct {
+			Content, Status string
+		} `json:"todos"`
+		Plan []struct {
+			Step, Status string
+		} `json:"plan"`
+	}
+	switch strings.ToLower(name) {
+	case "todowrite":
+		if json.Unmarshal(args, &a) != nil {
+			return nil, false
+		}
+		out := []todoItem{}
+		for _, x := range a.Todos {
+			out = append(out, todoItem{x.Content, x.Status})
+		}
+		return out, true
+	case "update_plan":
+		if json.Unmarshal(args, &a) != nil {
+			return nil, false
+		}
+		out := []todoItem{}
+		for _, x := range a.Plan {
+			out = append(out, todoItem{x.Step, x.Status})
+		}
+		return out, true
+	}
+	return nil, false
 }
 
 // describeTool maps the tool names of Claude Code, Codex and pi onto a few
@@ -686,6 +823,15 @@ func describeTool(name string, raw []byte) (kind, summary, diff string) {
 		return "task", str("description", "prompt"), ""
 	case "todowrite", "update_plan":
 		return "todo", "", ""
+	case "exitplanmode":
+		return "plan", str("plan"), ""
+	case "askuserquestion":
+		if qs, ok := a["questions"].([]any); ok && len(qs) > 0 {
+			if q, ok := qs[0].(map[string]any); ok {
+				return "question", strAny(q, "question"), ""
+			}
+		}
+		return "question", "", ""
 	}
 	return "other", str("command", "file_path", "path", "pattern", "url", "query", "description"), ""
 }

@@ -6,7 +6,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import top.bangwu.taildeck.R
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
@@ -37,8 +46,13 @@ private sealed interface Block {
     data class Code(val lang: String, val text: String) : Block
     data class Item(val marker: String, val depth: Int, val text: String) : Block
     data class Quote(val text: String) : Block
+    data class Table(val rows: List<List<String>>) : Block
     data object Rule : Block
 }
+
+private val tableRule = Regex("""^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?$""")
+
+private fun tableCells(line: String) = line.trim().removePrefix("|").removeSuffix("|").split('|').map { it.trim() }
 
 private val listItem = Regex("""^(\s*)([-*+]|\d+[.)])\s+(.*)$""")
 
@@ -69,6 +83,16 @@ private fun parseBlocks(src: String): List<Block> {
                 flush()
                 val level = trimmed.takeWhile { it == '#' }.length
                 out += Block.Heading(level, trimmed.drop(level).trim())
+            }
+            trimmed.startsWith("|") && lines.getOrNull(i + 1)?.trim()?.matches(tableRule) == true -> {
+                flush()
+                val rows = arrayListOf(tableCells(trimmed))
+                i += 2
+                while (i < lines.size && lines[i].trim().startsWith("|")) {
+                    rows += tableCells(lines[i]); i++
+                }
+                i--
+                out += Block.Table(rows)
             }
             trimmed.matches(Regex("""^([-*_])\1{2,}$""")) -> { flush(); out += Block.Rule }
             trimmed.startsWith(">") -> { flush(); out += Block.Quote(trimmed.removePrefix(">").trim()) }
@@ -147,19 +171,51 @@ fun Markdown(text: String, modifier: Modifier = Modifier, color: Color = Materia
                 is Block.Quote -> Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(6.dp)) {
                     Text(inlineText(b.text), Modifier.padding(10.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                is Block.Code -> CodeBlock(b.text, b.lang)
+                is Block.Code -> CodeBlock(b.text, b.lang, copyable = true)
+                is Block.Table -> TableBlock(b.rows, color)
                 Block.Rule -> HorizontalDivider(Modifier.padding(vertical = 4.dp))
             }
         }
     }
 }
 
+// Columns are laid out side by side so every column takes its widest cell.
 @Composable
-fun CodeBlock(code: String, label: String = "", maxLines: Int = Int.MAX_VALUE) {
+private fun TableBlock(rows: List<List<String>>, color: Color) {
+    val columns = rows.maxOf { it.size }
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(10.dp)) {
+        Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 6.dp)) {
+            for (c in 0 until columns) {
+                Column(Modifier.padding(horizontal = 10.dp)) {
+                    rows.forEachIndexed { r, row ->
+                        Text(
+                            inlineText(row.getOrElse(c) { "" }),
+                            Modifier.padding(vertical = 4.dp),
+                            style = if (r == 0) MaterialTheme.typography.labelLarge else MaterialTheme.typography.bodyMedium,
+                            color = color,
+                            softWrap = false,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CodeBlock(code: String, label: String = "", maxLines: Int = Int.MAX_VALUE, copyable: Boolean = false) {
+    val context = LocalContext.current
     Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-            if (label.isNotEmpty()) {
-                Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (label.isNotEmpty() || copyable) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(label, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (copyable) {
+                        IconButton(onClick = { context.copy(code) }, Modifier.size(28.dp)) {
+                            Icon(Icons.Outlined.ContentCopy, stringResource(R.string.copy), Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
             }
             Text(
                 code,

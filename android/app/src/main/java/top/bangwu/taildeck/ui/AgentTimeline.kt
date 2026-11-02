@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -22,8 +23,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Description
@@ -33,8 +36,12 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material.icons.outlined.Map
+import androidx.compose.material.icons.outlined.RadioButtonChecked
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -46,6 +53,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -68,65 +76,75 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.abs
 import kotlinx.coroutines.delay
 import top.bangwu.taildeck.ChatMessage
 import top.bangwu.taildeck.R
-import kotlin.math.abs
+import top.bangwu.taildeck.Todo
 
 sealed interface ChatRow { val key: String }
 data class MessageRow(val m: ChatMessage) : ChatRow { override val key get() = m.id }
 data class ToolGroupRow(override val key: String, val items: List<ChatMessage>, val open: Boolean) : ChatRow
 data class TurnFooterRow(override val key: String, val text: String, val durationMs: Long?, val endTs: Long) : ChatRow
 
+enum class ChatDisplay(val key: String) {
+    FULL("full"), TOOLS("tools"), TURNS("turns");
+    companion object { fun of(key: String) = entries.firstOrNull { it.key == key } ?: TOOLS }
+}
+
+private fun ChatMessage.groupable() = role == "thinking" || role == "tool" && kind != "plan" && kind != "question"
+
 /**
- * Chronological rows. Runs with two or more tool calls fold into one group;
- * every answered turn ends with a footer. The latest turn stays open while
- * the agent works, so it gets no footer and its last run shows its newest call.
+ * Chronological rows, one turn per user message. TOOLS folds runs of two or
+ * more calls; TURNS also folds everything an answered turn did before its
+ * final reply. The latest turn stays open while the agent works: no footer,
+ * and its last run keeps showing the newest call.
  */
-fun buildRows(messages: List<ChatMessage>, working: Boolean): List<ChatRow> {
-    val rows = ArrayList<ChatRow>()
-    val run = ArrayList<ChatMessage>()
-    var turnUser: ChatMessage? = null
-    val replies = ArrayList<String>()
-    var lastTs = 0L
-
-    fun flush(open: Boolean) {
-        if (run.count { it.role == "tool" } >= 2) rows += ToolGroupRow("g:" + run.first().id, run.toList(), open)
-        else run.forEach { rows += MessageRow(it) }
-        run.clear()
-    }
-    fun closeTurn() {
-        if (replies.isNotEmpty()) {
-            val start = turnUser?.ts ?: 0L
-            val duration = if (start > 0 && lastTs >= start) lastTs - start else null
-            rows += TurnFooterRow("f:" + (turnUser?.id ?: "head"), replies.joinToString("\n\n"), duration, lastTs)
-        }
-        replies.clear()
-    }
-
+fun buildRows(messages: List<ChatMessage>, working: Boolean, display: ChatDisplay = ChatDisplay.TOOLS): List<ChatRow> {
+    val turns = ArrayList<MutableList<ChatMessage>>()
     for (m in messages) {
-        if (m.role == "user") {
-            flush(false)
-            closeTurn()
-            turnUser = m
-            lastTs = m.ts
-            rows += MessageRow(m)
-            continue
-        }
-        if (m.ts > lastTs) lastTs = m.ts
-        if (m.role == "tool" || m.role == "thinking") {
-            run += m
-            continue
-        }
-        flush(false)
-        rows += MessageRow(m)
-        if (m.role == "assistant") replies += m.text
+        if (m.role == "user" || turns.isEmpty()) turns += ArrayList<ChatMessage>()
+        turns.last() += m
     }
-    flush(working)
-    if (!working) closeTurn()
+    val rows = ArrayList<ChatRow>()
+    turns.forEachIndexed { i, turn ->
+        val open = working && i == turns.lastIndex
+        val user = turn.first().takeIf { it.role == "user" }
+        var body: List<ChatMessage> = if (user != null) turn.drop(1) else turn
+        if (user != null) rows += MessageRow(user)
+        if (display == ChatDisplay.TURNS && !open) {
+            val last = body.indexOfLast { it.role == "assistant" }
+            if (last > 0) {
+                rows += ToolGroupRow("t:" + body.first().id, body.subList(0, last), false)
+                body = body.subList(last, body.size)
+            }
+        }
+        val run = ArrayList<ChatMessage>()
+        fun flush(live: Boolean) {
+            if (display != ChatDisplay.FULL && run.count { it.role == "tool" } >= 2) rows += ToolGroupRow("g:" + run.first().id, run.toList(), live)
+            else run.forEach { rows += MessageRow(it) }
+            run.clear()
+        }
+        for (m in body) {
+            if (m.groupable()) {
+                run += m
+            } else {
+                flush(false)
+                rows += MessageRow(m)
+            }
+        }
+        flush(open)
+        val replies = turn.filter { it.role == "assistant" }.map { it.text }
+        if (!open && replies.isNotEmpty()) {
+            val end = turn.maxOf { it.ts }
+            val start = user?.ts ?: 0L
+            rows += TurnFooterRow("f:" + (user?.id ?: "head"), replies.joinToString("\n\n"), if (start > 0 && end >= start) end - start else null, end)
+        }
+    }
     return rows
 }
 
@@ -147,6 +165,8 @@ private fun toolIcon(kind: String): ImageVector = when (kind) {
     "fetch" -> Icons.Outlined.Language
     "task" -> Icons.Outlined.AccountTree
     "todo" -> Icons.Outlined.Checklist
+    "plan" -> Icons.Outlined.Map
+    "question" -> Icons.AutoMirrored.Outlined.HelpOutline
     else -> Icons.Outlined.Build
 }
 
@@ -160,6 +180,8 @@ private fun toolLabel(m: ChatMessage): String = when (m.kind) {
     "fetch" -> stringResource(R.string.tool_fetch)
     "task" -> stringResource(R.string.tool_task)
     "todo" -> stringResource(R.string.tool_todo)
+    "plan" -> stringResource(R.string.tool_plan)
+    "question" -> stringResource(R.string.tool_question)
     else -> m.name.ifEmpty { "tool" }
 }
 
@@ -199,14 +221,14 @@ private fun groupSummary(items: List<ChatMessage>): String {
     val read = distinct("read")
     val ran = tools.count { it.kind == "shell" }
     val searched = tools.count { it.kind == "search" }
-    val other = tools.count { it.kind !in setOf("edit", "write", "read", "shell", "search") }
+    val other = tools.count { it.kind !in setOf("edit", "write", "read", "shell", "search", "plan", "question") }
     val parts = listOfNotNull(
         if (edited > 0) pluralStringResource(R.plurals.tools_edited, edited, edited) else null,
         if (read > 0) pluralStringResource(R.plurals.tools_read, read, read) else null,
         if (ran > 0) pluralStringResource(R.plurals.tools_ran, ran, ran) else null,
         if (searched > 0) pluralStringResource(R.plurals.tools_searched, searched, searched) else null,
         if (other > 0) pluralStringResource(R.plurals.tools_other, other, other) else null,
-    )
+    ).ifEmpty { listOf(pluralStringResource(R.plurals.tools_steps, items.size, items.size)) }
     return parts.joinToString(stringResource(R.string.list_separator)).replaceFirstChar { it.titlecase() }
 }
 
@@ -238,6 +260,34 @@ fun ToolGroup(row: ToolGroupRow, ctx: ToolContext, modifier: Modifier, item: @Co
                 Modifier.padding(start = 12.dp).drawBehind { drawLine(rail, Offset(0f, 0f), Offset(0f, size.height), 1.5.dp.toPx()) }.padding(start = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) { shown.forEach { item(it) } }
+        }
+    }
+}
+
+/** Plans and questions are part of the conversation, so they render as cards. */
+@Composable
+fun ToolCard(m: ChatMessage, ctx: ToolContext, modifier: Modifier) {
+    androidx.compose.material3.Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(14.dp), modifier = modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(toolIcon(m.kind), null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Text(toolLabel(m), Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                when {
+                    m.pending && ctx.live -> Text(stringResource(R.string.tool_waiting), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    m.error -> Text(stringResource(R.string.tool_declined), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+                }
+            }
+            Markdown(m.text.ifEmpty { m.summary })
+            if (!m.pending && m.output.isNotBlank()) {
+                Text(
+                    m.output.trim(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 6,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
@@ -441,5 +491,100 @@ fun PromptOptions(prompt: ScreenPrompt, enabled: Boolean, onPick: (List<String>)
                 else -> FilledTonalButton(onClick = { onPick(prompt.keysFor(i)) }, enabled = enabled, modifier = modifier) { text() }
             }
         }
+    }
+}
+
+// ---- tracks above the composer: task list and context usage ----
+
+@Composable
+fun TodoTrack(todos: List<Todo>, modifier: Modifier = Modifier) {
+    if (todos.none { it.status != "completed" }) return
+    var open by rememberSaveable { mutableStateOf(false) }
+    val rotation by animateFloatAsState(if (open) 0f else 180f, label = "chevron")
+    val done = todos.count { it.status == "completed" }
+    val current = todos.firstOrNull { it.status == "in_progress" } ?: todos.firstOrNull { it.status != "completed" }
+    Column(modifier.animateContentSize(Motion.slow())) {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { open = !open }.padding(horizontal = 6.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Outlined.Checklist, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(8.dp))
+            Text(stringResource(R.string.todo_progress, done, todos.size), style = MaterialTheme.typography.labelLarge)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                if (open) "" else current?.text.orEmpty(),
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Icon(Icons.Outlined.ExpandMore, null, Modifier.size(18.dp).rotate(rotation), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (open) {
+            Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()).padding(start = 6.dp, end = 6.dp, bottom = 4.dp)) {
+                todos.forEach { t ->
+                    Row(Modifier.padding(vertical = 3.dp), verticalAlignment = Alignment.Top) {
+                        Icon(
+                            when (t.status) {
+                                "completed" -> Icons.Outlined.CheckCircle
+                                "in_progress" -> Icons.Outlined.RadioButtonChecked
+                                else -> Icons.Outlined.RadioButtonUnchecked
+                            },
+                            null,
+                            Modifier.padding(top = 2.dp).size(15.dp),
+                            tint = when (t.status) {
+                                "completed" -> OnlineGreen
+                                "in_progress" -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.outline
+                            },
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            t.text,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (t.status == "completed") MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                            textDecoration = if (t.status == "completed") TextDecoration.LineThrough else null,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+fun formatTokens(n: Long): String = when {
+    n < 1_000 -> "$n"
+    n < 1_000_000 -> String.format(java.util.Locale.ROOT, "%.1fK", n / 1_000.0)
+    else -> String.format(java.util.Locale.ROOT, "%.2fM", n / 1_000_000.0)
+}
+
+/** Tokens in context after the latest model call; a share only when the agent records its window. */
+@Composable
+fun ContextChip(used: Long, window: Long, model: String) {
+    if (used <= 0) return
+    var details by remember { mutableStateOf(false) }
+    val pct = if (window > 0) (used * 100 / window).toInt() else null
+    Text(
+        listOfNotNull(stringResource(R.string.context_used, formatTokens(used)), pct?.let { "$it%" }).joinToString(" · "),
+        Modifier.clip(RoundedCornerShape(8.dp)).clickable { details = true }.padding(horizontal = 6.dp, vertical = 6.dp),
+        style = MaterialTheme.typography.labelMedium,
+        color = if ((pct ?: 0) >= 85) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (details) {
+        AlertDialog(
+            onDismissRequest = { details = false },
+            confirmButton = { TextButton(onClick = { details = false }) { Text(stringResource(android.R.string.ok)) } },
+            title = { Text(stringResource(R.string.context_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (model.isNotEmpty()) Text(stringResource(R.string.context_model, model))
+                    Text(stringResource(R.string.context_tokens, "%,d".format(used)))
+                    if (window > 0) Text(stringResource(R.string.context_window, "%,d".format(window), pct ?: 0))
+                    else Text(stringResource(R.string.context_window_unknown), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+        )
     }
 }
