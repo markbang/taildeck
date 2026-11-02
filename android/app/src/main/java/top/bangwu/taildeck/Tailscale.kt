@@ -126,6 +126,7 @@ class Tailscale(private val context: Context, private val store: Store) {
     suspend fun logout() = withContext(Dispatchers.IO) {
         lock.withLock {
             poller?.cancel()
+            TaildeckApp.instance.herdr.closeAll()
             runCatching { Tsbridge.logout() }
             Tsbridge.stop()
             stopKeepAlive()

@@ -1,5 +1,10 @@
 package top.bangwu.taildeck.ui
 
+import top.bangwu.taildeck.HerdrState
+import top.bangwu.taildeck.AgentStatus
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Badge
+import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.fadeOut
@@ -224,7 +229,7 @@ private val EXTRA_CHARS = listOf("|", "/", "-", "~", "_", ":")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TerminalScreen(node: String, onBack: () -> Unit) {
+fun TerminalScreen(node: String, onBack: () -> Unit, onAgents: () -> Unit) {
     val app = TaildeckApp.instance
     val saved = remember { app.store.sshProfile(node) }
     val controller = remember { SshController(app.keys, app.resources) }
@@ -238,6 +243,13 @@ fun TerminalScreen(node: String, onBack: () -> Unit) {
     var attempt by remember { mutableIntStateOf(if (profile != null) 1 else 0) }
 
     controller.onState = { conn = it }
+    val herdrStates by app.herdr.states.collectAsStateWithLifecycle()
+    val herdrAgents = (herdrStates[node] as? HerdrState.Ready)?.agents
+    // Once the shell works, the same credentials can reach herdr's socket.
+    LaunchedEffect(conn) {
+        val p = profile
+        if (conn == Conn.Connected && p != null) app.herdr.ensure(node, p)
+    }
     controller.onNeedSettings = { showDialog = true }
 
     LaunchedEffect(viewReady, attempt) {
@@ -265,6 +277,14 @@ fun TerminalScreen(node: String, onBack: () -> Unit) {
             actions = {
                 AnimatedVisibility(conn is Conn.Closed, enter = fadeIn() + scaleIn(initialScale = 0.8f), exit = fadeOut()) {
                     TextButton(onClick = { if (profile == null) showDialog = true else attempt++ }) { Text(stringResource(R.string.reconnect)) }
+                }
+                AnimatedVisibility(herdrAgents != null, enter = fadeIn() + scaleIn(initialScale = 0.6f), exit = fadeOut()) {
+                    val blocked = herdrAgents.orEmpty().count { it.status == AgentStatus.BLOCKED }
+                    IconButton(onClick = onAgents) {
+                        BadgedBox(badge = { if (blocked > 0) Badge { Text("$blocked") } }) {
+                            Icon(Icons.Outlined.SmartToy, stringResource(R.string.agents_title))
+                        }
+                    }
                 }
                 IconButton(onClick = { showDialog = true }) { Icon(Icons.Outlined.ManageAccounts, stringResource(R.string.ssh_settings)) }
                 IconButton(onClick = { controller.view?.showKeyboard() }) { Icon(Icons.Outlined.Keyboard, stringResource(R.string.keyboard)) }

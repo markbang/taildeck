@@ -51,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -81,7 +82,7 @@ private data class ServiceDraft(val id: String?, val name: String, val scheme: S
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -> Unit, onSsh: (String) -> Unit) {
+fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -> Unit, onSsh: (String) -> Unit, onAgents: (String) -> Unit) {
     val app = TaildeckApp.instance
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -95,6 +96,10 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
     var scanning by remember { mutableStateOf(false) }
     var scanResult by remember { mutableStateOf<List<Int>?>(null) }
     var draft by remember { mutableStateOf<ServiceDraft?>(null) }
+    // Probe herdr in the background with the saved SSH profile, if any.
+    LaunchedEffect(name, node?.online) {
+        if (node?.online == true) app.store.sshProfile(name)?.let { app.herdr.ensure(name, it) }
+    }
 
     Scaffold(
         topBar = {
@@ -155,6 +160,8 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
                     }
                 }
             }
+
+            item { HerdrSummary(name) { onAgents(name) } }
 
             if (node != null) item { NodeInfo(node) }
 

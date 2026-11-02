@@ -43,61 +43,12 @@ func DialSSH(host string, port int, user, password, keyPath, passphrase, certPat
 	if listener == nil {
 		return nil, errors.New("listener is required")
 	}
-	var auths []ssh.AuthMethod
-	if keyPath != "" {
-		signers, err := loadSigners(keyPath, passphrase, certPath)
-		if err != nil {
-			return nil, err
-		}
-		auths = append(auths, ssh.PublicKeys(signers...))
-	}
-	if password != "" {
-		auths = append(auths, ssh.Password(password))
-	}
-	auths = append(auths, ssh.KeyboardInteractive(func(name, instruction string, questions []string, echos []bool) ([]string, error) {
-		// Tailscale SSH "check" mode sends the re-auth URL as an instruction.
-		if msg := strings.TrimSpace(name + "\n" + instruction); msg != "" {
-			listener.OnData([]byte(strings.ReplaceAll(msg, "\n", "\r\n") + "\r\n"))
-		}
-		answers := make([]string, len(questions))
-		for i := range answers {
-			answers[i] = password
-		}
-		return answers, nil
-	}))
-
-	addr := net.JoinHostPort(e.resolveHost(host), fmt.Sprint(port))
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	raw, err := e.srv.Dial(ctx, "tcp", addr)
+	client, err := e.dialClient(host, port, user, password, keyPath, passphrase, certPath, func(msg string) {
+		listener.OnData([]byte(strings.ReplaceAll(msg, "\n", "\r\n")))
+	})
 	if err != nil {
-		return nil, fmt.Errorf("connect %s: %w", addr, err)
-	}
-	conn := &identConn{Conn: raw}
-	config := &ssh.ClientConfig{
-		User:            user,
-		Auth:            auths,
-		HostKeyCallback: tofuHostKeys(filepath.Join(e.dir, "known_hosts"), listener),
-		BannerCallback: func(message string) error {
-			listener.OnData([]byte(strings.ReplaceAll(message, "\n", "\r\n")))
-			return nil
-		},
-		Timeout: 20 * time.Second,
-	}
-	// Tailscale SSH check mode may block auth until the user approves in a browser.
-	conn.SetDeadline(time.Now().Add(5 * time.Minute))
-	c, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
-	if err != nil {
-		conn.Close()
-		// The server's version string tells OpenSSH, Dropbear and Tailscale
-		// SSH apart, which decides where keys have to be authorized.
-		if v := conn.serverVersion(); v != "" {
-			return nil, fmt.Errorf("%w [server %s]", err, v)
-		}
 		return nil, err
 	}
-	conn.SetDeadline(time.Time{})
-	client := ssh.NewClient(c, chans, reqs)
 	session, err := client.NewSession()
 	if err != nil {
 		client.Close()
@@ -203,8 +154,68 @@ func (c *identConn) serverVersion() string {
 	return ""
 }
 
+// dialClient authenticates an SSH client to host:port over the tailnet. notice
+// receives banners, Tailscale SSH check-mode URLs and host key trust messages.
+func (e *engine) dialClient(host string, port int, user, password, keyPath, passphrase, certPath string, notice func(string)) (*ssh.Client, error) {
+	var auths []ssh.AuthMethod
+	if keyPath != "" {
+		signers, err := loadSigners(keyPath, passphrase, certPath)
+		if err != nil {
+			return nil, err
+		}
+		auths = append(auths, ssh.PublicKeys(signers...))
+	}
+	if password != "" {
+		auths = append(auths, ssh.Password(password))
+	}
+	auths = append(auths, ssh.KeyboardInteractive(func(name, instruction string, questions []string, echos []bool) ([]string, error) {
+		// Tailscale SSH "check" mode sends the re-auth URL as an instruction.
+		if msg := strings.TrimSpace(name + "\n" + instruction); msg != "" {
+			notice(msg + "\n")
+		}
+		answers := make([]string, len(questions))
+		for i := range answers {
+			answers[i] = password
+		}
+		return answers, nil
+	}))
+
+	addr := net.JoinHostPort(e.resolveHost(host), fmt.Sprint(port))
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	raw, err := e.srv.Dial(ctx, "tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("connect %s: %w", addr, err)
+	}
+	conn := &identConn{Conn: raw}
+	config := &ssh.ClientConfig{
+		User:            user,
+		Auth:            auths,
+		HostKeyCallback: tofuHostKeys(filepath.Join(e.dir, "known_hosts"), notice),
+		BannerCallback: func(message string) error {
+			notice(message)
+			return nil
+		},
+		Timeout: 20 * time.Second,
+	}
+	// Tailscale SSH check mode may block auth until the user approves in a browser.
+	conn.SetDeadline(time.Now().Add(5 * time.Minute))
+	c, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
+	if err != nil {
+		conn.Close()
+		// The server's version string tells OpenSSH, Dropbear and Tailscale
+		// SSH apart, which decides where keys have to be authorized.
+		if v := conn.serverVersion(); v != "" {
+			return nil, fmt.Errorf("%w [server %s]", err, v)
+		}
+		return nil, err
+	}
+	conn.SetDeadline(time.Time{})
+	return ssh.NewClient(c, chans, reqs), nil
+}
+
 // tofuHostKeys trusts a host key on first use and rejects later changes.
-func tofuHostKeys(path string, listener SSHListener) ssh.HostKeyCallback {
+func tofuHostKeys(path string, notice func(string)) ssh.HostKeyCallback {
 	return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		if f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0o600); err == nil {
 			f.Close()
@@ -229,7 +240,7 @@ func tofuHostKeys(path string, listener SSHListener) ssh.HostKeyCallback {
 		if _, err := f.WriteString(knownhosts.Line([]string{knownhosts.Normalize(hostname)}, key) + "\n"); err != nil {
 			return err
 		}
-		listener.OnData([]byte(fmt.Sprintf("\x1b[2mTrusted new host key %s %s\x1b[0m\r\n", key.Type(), ssh.FingerprintSHA256(key))))
+		notice(fmt.Sprintf("\x1b[2mTrusted new host key %s %s\x1b[0m\n", key.Type(), ssh.FingerprintSHA256(key)))
 		return nil
 	}
 }

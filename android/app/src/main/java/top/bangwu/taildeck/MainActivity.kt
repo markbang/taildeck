@@ -12,6 +12,8 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavType
@@ -19,6 +21,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import top.bangwu.taildeck.ui.AgentChatScreen
+import top.bangwu.taildeck.ui.AgentsScreen
 import top.bangwu.taildeck.ui.HomeScreen
 import top.bangwu.taildeck.ui.LoginScreen
 import top.bangwu.taildeck.ui.LogsScreen
@@ -30,10 +34,23 @@ import top.bangwu.taildeck.ui.TerminalScreen
 import top.bangwu.taildeck.ui.WebScreen
 
 class MainActivity : ComponentActivity() {
+    // Route requested by a notification tap, consumed by AppNav.
+    private val pendingRoute = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        setContent { TaildeckTheme { AppNav() } }
+        pendingRoute.value = intent?.getStringExtra(EXTRA_ROUTE)
+        setContent { TaildeckTheme { AppNav(pendingRoute) } }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        intent.getStringExtra(EXTRA_ROUTE)?.let { pendingRoute.value = it }
+    }
+
+    companion object {
+        const val EXTRA_ROUTE = "route"
     }
 }
 
@@ -41,10 +58,12 @@ object Routes {
     fun node(name: String) = "node/${Uri.encode(name)}"
     fun web(url: String, title: String) = "web?url=${Uri.encode(url)}&title=${Uri.encode(title)}"
     fun ssh(node: String) = "ssh/${Uri.encode(node)}"
+    fun agents(node: String) = "agents/${Uri.encode(node)}"
+    fun agent(node: String, pane: String) = "agent/${Uri.encode(node)}/${Uri.encode(pane)}"
 }
 
 @Composable
-private fun AppNav() {
+private fun AppNav(pendingRoute: MutableState<String?>) {
     val app = TaildeckApp.instance
     val nav = rememberNavController()
     val state by app.tailscale.state.collectAsStateWithLifecycle()
@@ -57,6 +76,12 @@ private fun AppNav() {
         if (state.phase == Phase.NEEDS_LOGIN && state.authUrl != null && route != "login") {
             nav.navigate("login") { popUpTo(0) }
         }
+    }
+
+    LaunchedEffect(pendingRoute.value) {
+        val route = pendingRoute.value ?: return@LaunchedEffect
+        pendingRoute.value = null
+        if (app.store.configured) nav.navigate(route) { launchSingleTop = true }
     }
 
     NavHost(
@@ -95,6 +120,7 @@ private fun AppNav() {
                 onBack = { nav.popBackStack() },
                 onOpenInApp = { url, title -> nav.navigate(Routes.web(url, title)) },
                 onSsh = { node -> nav.navigate(Routes.ssh(node)) },
+                onAgents = { node -> nav.navigate(Routes.agents(node)) },
             )
         }
         composable(
@@ -111,7 +137,29 @@ private fun AppNav() {
             )
         }
         composable("ssh/{node}", arguments = listOf(navArgument("node") { type = NavType.StringType })) {
-            TerminalScreen(node = it.arguments?.getString("node").orEmpty(), onBack = { nav.popBackStack() })
+            val node = it.arguments?.getString("node").orEmpty()
+            TerminalScreen(node = node, onBack = { nav.popBackStack() }, onAgents = { nav.navigate(Routes.agents(node)) { launchSingleTop = true } })
+        }
+        composable("agents/{node}", arguments = listOf(navArgument("node") { type = NavType.StringType })) {
+            val node = it.arguments?.getString("node").orEmpty()
+            AgentsScreen(
+                node = node,
+                onBack = { nav.popBackStack() },
+                onAgent = { pane -> nav.navigate(Routes.agent(node, pane)) },
+                onTerminal = { nav.navigate(Routes.ssh(node)) { launchSingleTop = true } },
+            )
+        }
+        composable(
+            "agent/{node}/{pane}",
+            arguments = listOf(navArgument("node") { type = NavType.StringType }, navArgument("pane") { type = NavType.StringType }),
+        ) {
+            val node = it.arguments?.getString("node").orEmpty()
+            AgentChatScreen(
+                node = node,
+                pane = it.arguments?.getString("pane").orEmpty(),
+                onBack = { if (!nav.popBackStack()) nav.navigate(Routes.agents(node)) },
+                onTerminal = { nav.navigate(Routes.ssh(node)) { launchSingleTop = true } },
+            )
         }
         composable("settings") {
             SettingsScreen(
