@@ -797,7 +797,7 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
         if (modelSheet) {
             // pi would take a command typed mid-turn as a steering message, so it waits.
             val busy = status == AgentStatus.BLOCKED || status == AgentStatus.WORKING && kind in setOf("pi", "omp")
-            ModelSheet(node, kind, shownSettings, enabled = !busy, onDismiss = { modelSheet = false }) { cmd, model, effort ->
+            ModelSheet(node, pane, kind, shownSettings, enabled = !busy, onDismiss = { modelSheet = false }) { cmd, model, effort ->
                 picked = recorded to shownSettings.copy(model = model ?: shownSettings.model, effort = effort ?: shownSettings.effort)
                 prompt(cmd)
             }

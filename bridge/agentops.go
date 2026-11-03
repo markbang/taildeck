@@ -724,10 +724,10 @@ type modelChoice struct {
 }
 
 // ModelOptions lists the models and reasoning levels an agent of kind can be
-// switched to, from what the agent itself keeps on the node: Codex's model
-// catalog cache and pi's enabled models. "custom" means other model ids are
-// accepted too.
-func (h *Herdr) ModelOptions(kind string) (string, error) {
+// switched to, from the agent itself: Codex's model catalog cache and the
+// models pi reports as usable with the credentials it has. "custom" means
+// other model ids are accepted too.
+func (h *Herdr) ModelOptions(kind, pane string) (string, error) {
 	out := map[string]any{"models": []modelChoice{}, "efforts": []string{}, "custom": false}
 	switch kind {
 	case "claude":
@@ -736,6 +736,19 @@ func (h *Herdr) ModelOptions(kind string) (string, error) {
 	case "codex":
 		out["efforts"] = []string{"low", "medium", "high", "xhigh"}
 		out["custom"] = true
+		// Models named in config.toml (top level and profiles) come first: with
+		// another provider configured they are the ones that actually work.
+		models := []modelChoice{}
+		seen := map[string]bool{}
+		if conf, err := h.exec(`cat "${CODEX_HOME:-$HOME/.codex}/config.toml" 2>/dev/null`, 10*time.Second); err == nil {
+			for _, m := range codexConfigModel.FindAllStringSubmatch(string(conf), -1) {
+				if !seen[m[1]] {
+					seen[m[1]] = true
+					models = append(models, modelChoice{ID: m[1], Name: m[1]})
+				}
+			}
+		}
+		out["models"] = models
 		raw, err := h.exec(`cat "${CODEX_HOME:-$HOME/.codex}/models_cache.json" 2>/dev/null`, 10*time.Second)
 		if err != nil {
 			break
@@ -754,9 +767,8 @@ func (h *Herdr) ModelOptions(kind string) (string, error) {
 		if json.Unmarshal(raw, &cache) != nil {
 			break
 		}
-		var models []modelChoice
 		for _, m := range cache.Models {
-			if m.Slug == "" || m.Visibility != "list" {
+			if m.Slug == "" || m.Visibility != "list" || seen[m.Slug] {
 				continue
 			}
 			c := modelChoice{ID: m.Slug, Name: m.DisplayName, Default: m.Default}
@@ -774,33 +786,99 @@ func (h *Herdr) ModelOptions(kind string) (string, error) {
 	case "pi", "omp":
 		out["efforts"] = []string{"off", "minimal", "low", "medium", "high", "xhigh"}
 		out["custom"] = true
-		raw, err := h.exec(`cat "$HOME/.pi/agent/settings.json" 2>/dev/null`, 10*time.Second)
-		if err != nil {
-			break
-		}
-		var set struct {
-			Provider string   `json:"defaultProvider"`
-			Model    string   `json:"defaultModel"`
-			Enabled  []string `json:"enabledModels"`
-		}
-		json.Unmarshal(raw, &set)
-		seen := map[string]bool{}
-		var models []modelChoice
-		add := func(id string) {
-			if id == "" || seen[id] || strings.ContainsAny(id, "*?[") {
-				return
-			}
-			seen[id] = true
-			models = append(models, modelChoice{ID: id, Name: id})
-		}
-		if set.Provider != "" && set.Model != "" {
-			add(set.Provider + "/" + set.Model)
-		}
-		for _, m := range set.Enabled {
-			add(m)
+		models := h.piModels(kind, pane)
+		if len(models) == 0 {
+			models = h.piSettingsModels()
 		}
 		out["models"] = models
 	}
 	b, err := json.Marshal(out)
 	return string(b), err
+}
+
+// piModels asks pi for every model it can use right now (its built-in
+// catalog and models.json, limited to providers it has credentials for),
+// running the same pi the pane runs when that can be told from its process.
+func (h *Herdr) piModels(kind, pane string) []modelChoice {
+	var cmds []string
+	if p, err := h.processInfo(pane); err == nil {
+		for _, fp := range p.Foreground {
+			for i, a := range fp.Argv {
+				if b := path.Base(a); b == kind || b == kind+".js" || strings.Contains(a, "coding-agent") && strings.HasSuffix(a, ".js") {
+					var q []string
+					for _, x := range fp.Argv[:i+1] {
+						q = append(q, shellQuote(x))
+					}
+					cmds = append(cmds, strings.Join(q, " "))
+					break
+				}
+			}
+		}
+	}
+	// A login shell finds pi where the user's PATH (nvm, npm prefix, ...) puts it.
+	cmds = append(cmds, `"${SHELL:-sh}" -lc 'exec `+kind+` "$@"' `+kind, `"${SHELL:-sh}" -ic 'exec `+kind+` "$@"' `+kind)
+	for _, c := range cmds {
+		out, err := h.exec(c+" --list-models </dev/null 2>/dev/null", 45*time.Second)
+		if err != nil {
+			continue
+		}
+		if models := parsePiModelTable(string(out)); len(models) > 0 {
+			return models
+		}
+	}
+	return nil
+}
+
+var codexConfigModel = regexp.MustCompile(`(?m)^\s*model\s*=\s*["']([^"']+)["']`)
+
+// parsePiModelTable reads "provider model context max-out thinking images" rows.
+func parsePiModelTable(out string) []modelChoice {
+	var models []modelChoice
+	header := false
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 2 && f[0] == "provider" && f[1] == "model" {
+			header = true
+			continue
+		}
+		if !header || len(f) < 6 {
+			continue
+		}
+		c := modelChoice{ID: f[0] + "/" + f[1], Name: f[1] + " · " + f[0]}
+		if f[4] == "no" {
+			c.Efforts = []string{"off"}
+		}
+		models = append(models, c)
+	}
+	return models
+}
+
+// piSettingsModels is the fallback when pi can't be run: its default and enabled models.
+func (h *Herdr) piSettingsModels() []modelChoice {
+	raw, err := h.exec(`cat "$HOME/.pi/agent/settings.json" 2>/dev/null`, 10*time.Second)
+	if err != nil {
+		return nil
+	}
+	var set struct {
+		Provider string   `json:"defaultProvider"`
+		Model    string   `json:"defaultModel"`
+		Enabled  []string `json:"enabledModels"`
+	}
+	json.Unmarshal(raw, &set)
+	seen := map[string]bool{}
+	var models []modelChoice
+	add := func(id string) {
+		if id == "" || seen[id] || strings.ContainsAny(id, "*?[") {
+			return
+		}
+		seen[id] = true
+		models = append(models, modelChoice{ID: id, Name: id})
+	}
+	if set.Provider != "" && set.Model != "" {
+		add(set.Provider + "/" + set.Model)
+	}
+	for _, m := range set.Enabled {
+		add(m)
+	}
+	return models
 }

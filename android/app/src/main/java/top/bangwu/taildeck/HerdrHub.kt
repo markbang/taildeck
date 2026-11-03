@@ -380,19 +380,20 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
     data class ModelChoice(val id: String, val name: String, val efforts: List<String>, val default: String)
     data class ModelOptions(val models: List<ModelChoice>, val efforts: List<String>, val custom: Boolean)
 
-    private val modelCache = HashMap<String, ModelOptions>()
+    private val modelCache = HashMap<String, Pair<Long, ModelOptions>>()
 
-    /** Models and reasoning levels the agent can switch to, from its own files on the node. */
-    suspend fun modelOptions(node: String, kind: String): ModelOptions = withContext(Dispatchers.IO) {
-        modelCache["$node|$kind"]?.let { return@withContext it }
-        val o = JSONObject(conn(node).modelOptions(kind))
+    /** Models and reasoning levels the agent in [pane] can switch to, as the agent itself reports them. */
+    suspend fun modelOptions(node: String, kind: String, pane: String): ModelOptions = withContext(Dispatchers.IO) {
+        val key = "$node|$kind"
+        modelCache[key]?.takeIf { System.currentTimeMillis() - it.first < 5 * 60_000 }?.let { return@withContext it.second }
+        val o = JSONObject(conn(node).modelOptions(kind, pane))
         fun strings(a: JSONArray?) = if (a == null) emptyList() else (0 until a.length()).map { a.getString(it) }
         val arr = o.optJSONArray("models") ?: JSONArray()
         ModelOptions(
             models = (0 until arr.length()).map { arr.getJSONObject(it).let { m -> ModelChoice(m.optString("id"), m.optString("name"), strings(m.optJSONArray("efforts")), m.optString("default")) } },
             efforts = strings(o.optJSONArray("efforts")),
             custom = o.optBoolean("custom"),
-        ).also { modelCache["$node|$kind"] = it }
+        ).also { modelCache[key] = System.currentTimeMillis() to it }
     }
 
     private val commandCache = HashMap<String, Pair<Long, List<Command>>>()

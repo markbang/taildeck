@@ -633,7 +633,8 @@ fun canSwitchModel(kind: String) = kind in setOf("claude", "codex", "pi", "omp")
 /** Whether [current] (as recorded in the transcript) is the model [id] names. */
 fun isCurrentModel(kind: String, current: String, id: String): Boolean = when (kind) {
     "claude" -> current.contains(id, ignoreCase = true)
-    "pi", "omp" -> current == id || current.endsWith("/" + id.substringAfterLast('/')) && id.substringAfterLast('/') == current.substringAfterLast('/')
+    // pi ids are provider/model (the model part may hold slashes too); sessions may record just the model.
+    "pi", "omp" -> current == id || id.substringAfter('/') == current || current.substringAfterLast('/') == id.substringAfterLast('/')
     else -> current == id
 }
 
@@ -726,6 +727,7 @@ private fun Pill(onClick: (() -> Unit)?, content: @Composable () -> Unit) {
 @Composable
 fun ModelSheet(
     node: String,
+    pane: String,
     kind: String,
     settings: AgentSettings,
     enabled: Boolean,
@@ -733,7 +735,8 @@ fun ModelSheet(
     onCommand: (command: String, model: String?, effort: String?) -> Unit,
 ) {
     val options by produceState<HerdrHub.ModelOptions?>(null, node, kind) {
-        value = runCatching { TaildeckApp.instance.herdr.modelOptions(node, kind) }.getOrNull()
+        value = runCatching { TaildeckApp.instance.herdr.modelOptions(node, kind, pane) }
+            .getOrElse { HerdrHub.ModelOptions(emptyList(), emptyList(), custom = true) }
     }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         val o = options
