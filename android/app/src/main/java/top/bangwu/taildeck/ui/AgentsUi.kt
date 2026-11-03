@@ -131,6 +131,7 @@ import org.json.JSONObject
 import top.bangwu.taildeck.AgentStatus
 import top.bangwu.taildeck.ChatMessage
 import top.bangwu.taildeck.HerdrAgent
+import top.bangwu.taildeck.AgentSettings
 import top.bangwu.taildeck.HerdrHub
 import top.bangwu.taildeck.HerdrState
 import top.bangwu.taildeck.QueuedPrompt
@@ -399,6 +400,11 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
     var statusLine by remember { mutableStateOf<StatusLine?>(null) }
     var suggestion by remember { mutableStateOf<String?>(null) }
     var commands by remember { mutableStateOf<List<HerdrHub.Command>>(emptyList()) }
+    var commandsLoading by remember { mutableStateOf(false) }
+    var modelSheet by remember { mutableStateOf(false) }
+    var commandSheet by remember { mutableStateOf(false) }
+    // A model or level just picked shows until the transcript records a change.
+    var picked by remember { mutableStateOf<Pair<AgentSettings, AgentSettings>?>(null) }
     var attachments by remember { mutableStateOf<List<Attachment>>(emptyList()) }
     val listState = rememberLazyListState()
     val kind = agent?.kind.orEmpty()
@@ -535,12 +541,18 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
             if (next != null) break
         }
     }
-    val wantsCommands = draft.startsWith("/")
+    val wantsCommands = draft.startsWith("/") || commandSheet
     LaunchedEffect(wantsCommands, kind) {
         if (!wantsCommands) return@LaunchedEffect
-        val builtins = if (kind == "claude") CLAUDE_BUILTINS.map { HerdrHub.Command(it.first, it.second, "builtin") } else emptyList()
-        commands = builtins + runCatching { hub.commands(node, kind, agent?.cwd.orEmpty()) }.getOrDefault(emptyList())
+        commands = builtinCommands(kind)
+        commandsLoading = true
+        val own = runCatching { hub.commands(node, kind, agent?.cwd.orEmpty()) }.getOrDefault(emptyList())
+        commands = commands + own.filter { o -> commands.none { it.name == o.name } }
+        commandsLoading = false
     }
+    val recorded = transcript?.settings ?: AgentSettings()
+    val shownSettings = picked?.takeIf { it.first == recorded }?.second ?: recorded
+    LaunchedEffect(recorded) { if (picked?.first != recorded) picked = null }
 
     fun attach(uris: List<android.net.Uri>) {
         uris.take(6).forEach { uri ->
@@ -752,9 +764,11 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
                             if (tr != null && tr.todos.any { it.status != "completed" }) {
                                 TodoTrack(tr.todos, Modifier.padding(horizontal = 10.dp).padding(top = 4.dp))
                             }
-                            if (tr != null) {
-                                SessionInfoBar(tr.settings, tr.contextUsed, tr.contextWindow, canSwitch = kind == "claude") { cmd -> prompt(cmd) }
-                            }
+                            AgentControlsBar(
+                                kind, shownSettings, tr?.contextUsed ?: 0, tr?.contextWindow ?: 0,
+                                onModel = { modelSheet = true },
+                                onCommands = { commandSheet = true },
+                            )
                             val s = suggestion
                             if (s != null && draft.isBlank() && attachments.isEmpty()) {
                                 SuggestionChip(s, onSend = { suggestion = null; prompt(s) }, onEdit = { draft = s; suggestion = null })
@@ -779,6 +793,17 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
                     }
                 }
             }
+        }
+        if (modelSheet) {
+            // pi would take a command typed mid-turn as a steering message, so it waits.
+            val busy = status == AgentStatus.BLOCKED || status == AgentStatus.WORKING && kind in setOf("pi", "omp")
+            ModelSheet(node, kind, shownSettings, enabled = !busy, onDismiss = { modelSheet = false }) { cmd, model, effort ->
+                picked = recorded to shownSettings.copy(model = model ?: shownSettings.model, effort = effort ?: shownSettings.effort)
+                prompt(cmd)
+            }
+        }
+        if (commandSheet) {
+            CommandSheet(commands, commandsLoading, onPick = { draft = it; commandSheet = false }) { commandSheet = false }
         }
         if (subagentList) {
             SubagentListSheet(runningSubagents(transcript), onOpen = { subagentList = false; openSubagent = it.id }) { subagentList = false }

@@ -593,25 +593,26 @@ fun SubagentSheet(node: String, pane: String, task: ChatMessage, onDismiss: () -
     }
 }
 
-// ---- session details and the model / effort menu ----
+// ---- session details, model / effort switching and commands ----
 
 private val CLAUDE_MODEL = Regex("^claude-([a-z]+)-(\\d+)(?:-(\\d{1,2}))?(?:-\\d{8})?(\\[1m])?$", RegexOption.IGNORE_CASE)
-val CLAUDE_MODELS = listOf("fable" to "Fable", "opus" to "Opus", "sonnet" to "Sonnet", "haiku" to "Haiku")
-val CLAUDE_EFFORTS = listOf("low", "medium", "high", "xhigh", "max", "auto")
 
 fun modelDisplayName(model: String): String {
-    val m = CLAUDE_MODEL.find(model.trim()) ?: return model.trim()
+    val m = CLAUDE_MODEL.find(model.trim()) ?: return model.trim().substringAfterLast('/')
     val version = listOf(m.groupValues[2], m.groupValues[3]).filter { it.isNotEmpty() }.joinToString(".")
     return m.groupValues[1].replaceFirstChar { it.titlecase() } + " " + version + if (m.groupValues[4].isNotEmpty()) " (1M)" else ""
 }
 
 @Composable
-private fun effortLabel(e: String): String = when (e) {
+fun effortLabel(e: String): String = when (e) {
+    "off", "none" -> stringResource(R.string.effort_off)
+    "minimal" -> stringResource(R.string.effort_minimal)
     "low" -> stringResource(R.string.effort_low)
     "medium" -> stringResource(R.string.effort_medium)
     "high" -> stringResource(R.string.effort_high)
     "xhigh" -> stringResource(R.string.effort_xhigh)
     "max" -> stringResource(R.string.effort_max)
+    "ultra" -> stringResource(R.string.effort_ultra)
     "auto" -> stringResource(R.string.effort_auto)
     else -> e
 }
@@ -626,54 +627,66 @@ private fun modeLabel(m: String): String = when (m) {
     else -> m
 }
 
+/** Harnesses whose model and reasoning level can be switched with a command. */
+fun canSwitchModel(kind: String) = kind in setOf("claude", "codex", "pi", "omp")
+
+/** Whether [current] (as recorded in the transcript) is the model [id] names. */
+fun isCurrentModel(kind: String, current: String, id: String): Boolean = when (kind) {
+    "claude" -> current.contains(id, ignoreCase = true)
+    "pi", "omp" -> current == id || current.endsWith("/" + id.substringAfterLast('/')) && id.substringAfterLast('/') == current.substringAfterLast('/')
+    else -> current == id
+}
+
+/** The command that switches to [model], keeping [effort] where the model supports it. */
+fun modelCommand(kind: String, model: String, effort: String?): String = when (kind) {
+    "codex" -> "/model $model" + (effort?.let { " --reasoning=$it" } ?: "")
+    else -> "/model $model"
+}
+
+fun effortCommand(kind: String, effort: String): String = when (kind) {
+    "claude" -> "/effort $effort"
+    "codex" -> "/model --reasoning=$effort"
+    else -> "/thinking $effort"
+}
+
 /**
- * Model · effort, permission mode, branch and context in use. For Claude the
- * model and effort open a menu that sends /model and /effort.
+ * The row above the composer: model · effort (tap to switch), commands,
+ * permission mode, branch and context in use.
  */
 @Composable
-fun SessionInfoBar(settings: AgentSettings, contextUsed: Long, window: Long, canSwitch: Boolean, onCommand: (String) -> Unit) {
-    var menu by remember { mutableStateOf(false) }
-    if (settings.model.isEmpty() && contextUsed <= 0 && settings.gitBranch.isEmpty()) return
+fun AgentControlsBar(
+    kind: String,
+    settings: AgentSettings,
+    contextUsed: Long,
+    window: Long,
+    onModel: () -> Unit,
+    onCommands: () -> Unit,
+) {
+    val switchable = canSwitchModel(kind)
+    if (!switchable && settings.model.isEmpty() && contextUsed <= 0 && settings.gitBranch.isEmpty()) return
     Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 2.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (settings.model.isNotEmpty()) {
-            Box {
-                Row(
-                    Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = canSwitch) { menu = true }.padding(vertical = 4.dp, horizontal = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Outlined.Psychology, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        modelDisplayName(settings.model) + if (settings.effort.isNotEmpty()) " · " + effortLabel(settings.effort) else "",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (canSwitch) Icon(Icons.Outlined.ExpandMore, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (switchable || settings.model.isNotEmpty()) {
+            Pill(onClick = if (switchable) onModel else null) {
+                Icon(Icons.Outlined.Psychology, null, Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    settings.model.takeIf { it.isNotEmpty() }?.let(::modelDisplayName) ?: stringResource(R.string.session_model),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                if (settings.effort.isNotEmpty()) {
+                    Text(" · " + effortLabel(settings.effort), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                    Text(stringResource(R.string.session_model), Modifier.padding(horizontal = 16.dp, vertical = 6.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                    CLAUDE_MODELS.forEach { (alias, name) ->
-                        DropdownMenuItem(
-                            text = { Text(name) },
-                            leadingIcon = { if (settings.model.contains(alias, ignoreCase = true)) Icon(Icons.Outlined.Done, null) else Spacer(Modifier.size(24.dp)) },
-                            onClick = { menu = false; onCommand("/model $alias") },
-                        )
-                    }
-                    HorizontalDivider()
-                    Text(stringResource(R.string.session_effort), Modifier.padding(horizontal = 16.dp, vertical = 6.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                    CLAUDE_EFFORTS.forEach { e ->
-                        DropdownMenuItem(
-                            text = { Text(effortLabel(e)) },
-                            leadingIcon = { if (settings.effort == e) Icon(Icons.Outlined.Done, null) else Spacer(Modifier.size(24.dp)) },
-                            onClick = { menu = false; onCommand("/effort $e") },
-                        )
-                    }
-                }
+                if (switchable) Icon(Icons.Outlined.ExpandMore, null, Modifier.size(14.dp))
             }
+        }
+        Pill(onClick = onCommands) {
+            Text("/", fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(4.dp))
+            Text(stringResource(R.string.commands), style = MaterialTheme.typography.labelMedium)
         }
         if (settings.permissionMode.isNotEmpty() && settings.permissionMode != "default") {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -690,6 +703,193 @@ fun SessionInfoBar(settings: AgentSettings, contextUsed: Long, window: Long, can
             }
         }
         ContextChip(contextUsed, window, settings.model)
+    }
+}
+
+@Composable
+private fun Pill(onClick: (() -> Unit)?, content: @Composable () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.clip(RoundedCornerShape(50)).then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+    ) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) { content() }
+    }
+}
+
+/**
+ * Pick a model and a reasoning level with taps. Each choice is sent to the
+ * agent as its own command (/model, /effort, /thinking).
+ */
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun ModelSheet(
+    node: String,
+    kind: String,
+    settings: AgentSettings,
+    enabled: Boolean,
+    onDismiss: () -> Unit,
+    onCommand: (command: String, model: String?, effort: String?) -> Unit,
+) {
+    val options by produceState<HerdrHub.ModelOptions?>(null, node, kind) {
+        value = runCatching { TaildeckApp.instance.herdr.modelOptions(node, kind) }.getOrNull()
+    }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        val o = options
+        if (o == null) Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        else ModelChoices(kind, o, settings, enabled, onCommand)
+    }
+}
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun ModelChoices(kind: String, o: HerdrHub.ModelOptions, settings: AgentSettings, enabled: Boolean, onCommand: (String, String?, String?) -> Unit) {
+    var custom by remember { mutableStateOf("") }
+    run {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp).padding(bottom = 24.dp).navigationBarsPadding()) {
+            if (!enabled) {
+                Text(stringResource(R.string.model_switch_busy), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp))
+            }
+            Text(stringResource(R.string.session_model), style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.size(4.dp))
+            val current = o.models.firstOrNull { isCurrentModel(kind, settings.model, it.id) }
+            if (o.models.isEmpty()) {
+                Text(
+                    stringResource(if (settings.model.isEmpty()) R.string.model_none_known else R.string.model_current, modelDisplayName(settings.model)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            o.models.forEach { m ->
+                val selected = m == current
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                        .background(if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
+                        .clickable(enabled = enabled && !selected) {
+                            val keep = settings.effort.takeIf { it in m.efforts }
+                            // Codex falls back to the model's default level when none is given.
+                            onCommand(modelCommand(kind, m.id, keep), m.id, keep ?: m.default.ifEmpty { null })
+                        }
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(m.name, style = MaterialTheme.typography.bodyLarge)
+                        if (!m.name.equals(m.id, ignoreCase = true)) Text(m.id, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (selected) Icon(Icons.Outlined.Done, null, Modifier.size(18.dp))
+                }
+            }
+            if (o.custom) {
+                Spacer(Modifier.size(6.dp))
+                TextField(
+                    custom,
+                    { custom = it.trim() },
+                    Modifier.fillMaxWidth(),
+                    placeholder = { Text(stringResource(if (kind == "codex") R.string.model_custom_codex else R.string.model_custom_pi)) },
+                    singleLine = true,
+                    enabled = enabled,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send, autoCorrectEnabled = false),
+                    keyboardActions = KeyboardActions(onSend = { if (custom.isNotEmpty()) onCommand(modelCommand(kind, custom, null), custom, null) }),
+                    trailingIcon = {
+                        IconButton(onClick = { onCommand(modelCommand(kind, custom, null), custom, null) }, enabled = enabled && custom.isNotEmpty()) { Icon(Icons.Outlined.Done, null) }
+                    },
+                )
+            }
+            val efforts = current?.efforts?.takeIf { it.isNotEmpty() } ?: o.efforts
+            if (efforts.isNotEmpty()) {
+                Spacer(Modifier.size(16.dp))
+                Text(stringResource(R.string.session_effort), style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.size(6.dp))
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    efforts.forEach { e ->
+                        val selected = settings.effort.equals(e, ignoreCase = true)
+                        androidx.compose.material3.FilterChip(
+                            selected = selected,
+                            enabled = enabled,
+                            onClick = { if (!selected) onCommand(effortCommand(kind, e), null, e) },
+                            label = { Text(effortLabel(e)) },
+                            leadingIcon = if (selected) { { Icon(Icons.Outlined.Done, null, Modifier.size(16.dp)) } } else null,
+                        )
+                    }
+                }
+                current?.default?.takeIf { it.isNotEmpty() }?.let {
+                    Text(stringResource(R.string.effort_default, effortLabel(it)), Modifier.padding(top = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+/** Commands each harness takes by typing, with what they do. */
+fun builtinCommands(kind: String): List<HerdrHub.Command> = when (kind) {
+    "claude" -> listOf(
+        "compact" to "Compact the conversation", "clear" to "Start a new conversation", "context" to "Show context usage",
+        "cost" to "Show usage and cost", "model" to "Switch model", "effort" to "Set thinking effort",
+        "review" to "Review a pull request", "security-review" to "Review pending changes for security issues",
+        "pr-comments" to "Fetch pull request comments", "init" to "Write CLAUDE.md for this project",
+    )
+    "codex" -> listOf(
+        "compact" to "Summarize the conversation to free context", "recap" to "Summarize the conversation now",
+        "review" to "Review current changes and find issues", "new" to "Start a new chat", "init" to "Create an AGENTS.md file",
+        "diff" to "Show git diff, including untracked files", "status" to "Show session configuration and token usage",
+        "model" to "Choose model and reasoning effort", "plan" to "Switch to Plan mode", "goal" to "Set or view the goal of a long task",
+        "fork" to "Fork the current chat", "side" to "Start a side conversation", "rename" to "Rename the thread",
+        "export" to "Export the conversation as Markdown", "ps" to "List background terminals", "stop" to "Stop all background terminals",
+        "usage" to "View account usage", "mcp" to "List MCP tools",
+    )
+    "pi", "omp" -> listOf(
+        "compact" to "Compact the session context", "new" to "Start a new session", "model" to "Switch model (provider/model)",
+        "thinking" to "Set thinking level", "name" to "Set session display name", "session" to "Show session info and stats",
+        "export" to "Export the session", "clone" to "Duplicate the session at this point", "reload" to "Reload extensions, skills and prompts",
+    )
+    else -> emptyList()
+}.map { HerdrHub.Command(it.first, it.second, "builtin") }
+
+/** Every command the agent knows: its own, then the project's and the user's commands and skills. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CommandSheet(commands: List<HerdrHub.Command>, loading: Boolean, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    var q by remember { mutableStateOf("") }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
+            TextField(
+                q,
+                { q = it },
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                placeholder = { Text(stringResource(R.string.commands_search)) },
+                singleLine = true,
+                leadingIcon = { Text("/", fontFamily = FontFamily.Monospace) },
+                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
+            )
+            val shown = commands.filter { q.isBlank() || it.name.contains(q.trim().removePrefix("/"), ignoreCase = true) || it.description.contains(q.trim(), ignoreCase = true) }
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 520.dp).padding(top = 8.dp)) {
+                listOf(
+                    "builtin" to R.string.commands_builtin,
+                    "command" to R.string.commands_custom,
+                    "prompt" to R.string.commands_custom,
+                    "skill" to R.string.commands_skills,
+                ).groupBy({ it.second }, { it.first }).forEach { (title, sources) ->
+                    val group = shown.filter { it.source in sources }
+                    if (group.isNotEmpty()) {
+                        item(key = "h$title") {
+                            Text(stringResource(title), Modifier.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                        }
+                        items(group, key = { "${it.source}:${it.name}" }) { c ->
+                            Column(Modifier.fillMaxWidth().clickable { onPick("/${c.name} ") }.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                                Text("/" + c.name, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
+                                if (c.description.isNotEmpty()) {
+                                    Text(c.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                    }
+                }
+                if (loading) item { Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) } }
+                else if (shown.isEmpty()) item { Text(stringResource(R.string.commands_none), Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+        }
     }
 }
 
@@ -711,13 +911,6 @@ fun AgentQueueStack(queued: List<AgentQueued>) {
         }
     }
 }
-
-/** Claude Code's own commands that are always there. */
-val CLAUDE_BUILTINS = listOf(
-    "compact" to "Compact the conversation", "clear" to "Start a new conversation", "model" to "Switch model",
-    "effort" to "Set thinking effort", "context" to "Show context usage", "cost" to "Show usage and cost",
-    "review" to "Review a pull request", "init" to "Write CLAUDE.md for this project", "memory" to "Edit memory",
-)
 
 @Composable
 fun CommandSuggestions(draft: String, commands: List<HerdrHub.Command>, onPick: (String) -> Unit) {

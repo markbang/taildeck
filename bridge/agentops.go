@@ -713,3 +713,94 @@ func (h *Herdr) quit(pane string, group, shell int) error {
 	}
 	return errors.New("quit_timeout: the agent didn't quit")
 }
+
+// ---- models an agent can switch to ----
+
+type modelChoice struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Efforts []string `json:"efforts,omitempty"`
+	Default string   `json:"default,omitempty"`
+}
+
+// ModelOptions lists the models and reasoning levels an agent of kind can be
+// switched to, from what the agent itself keeps on the node: Codex's model
+// catalog cache and pi's enabled models. "custom" means other model ids are
+// accepted too.
+func (h *Herdr) ModelOptions(kind string) (string, error) {
+	out := map[string]any{"models": []modelChoice{}, "efforts": []string{}, "custom": false}
+	switch kind {
+	case "claude":
+		out["models"] = []modelChoice{{ID: "fable", Name: "Fable"}, {ID: "opus", Name: "Opus"}, {ID: "sonnet", Name: "Sonnet"}, {ID: "haiku", Name: "Haiku"}}
+		out["efforts"] = []string{"low", "medium", "high", "xhigh", "max", "auto"}
+	case "codex":
+		out["efforts"] = []string{"low", "medium", "high", "xhigh"}
+		out["custom"] = true
+		raw, err := h.exec(`cat "${CODEX_HOME:-$HOME/.codex}/models_cache.json" 2>/dev/null`, 10*time.Second)
+		if err != nil {
+			break
+		}
+		var cache struct {
+			Models []struct {
+				Slug        string `json:"slug"`
+				DisplayName string `json:"display_name"`
+				Visibility  string `json:"visibility"`
+				Default     string `json:"default_reasoning_level"`
+				Levels      []struct {
+					Effort string `json:"effort"`
+				} `json:"supported_reasoning_levels"`
+			} `json:"models"`
+		}
+		if json.Unmarshal(raw, &cache) != nil {
+			break
+		}
+		var models []modelChoice
+		for _, m := range cache.Models {
+			if m.Slug == "" || m.Visibility != "list" {
+				continue
+			}
+			c := modelChoice{ID: m.Slug, Name: m.DisplayName, Default: m.Default}
+			if c.Name == "" {
+				c.Name = m.Slug
+			}
+			for _, l := range m.Levels {
+				c.Efforts = append(c.Efforts, l.Effort)
+			}
+			models = append(models, c)
+		}
+		if len(models) > 0 {
+			out["models"] = models
+		}
+	case "pi", "omp":
+		out["efforts"] = []string{"off", "minimal", "low", "medium", "high", "xhigh"}
+		out["custom"] = true
+		raw, err := h.exec(`cat "$HOME/.pi/agent/settings.json" 2>/dev/null`, 10*time.Second)
+		if err != nil {
+			break
+		}
+		var set struct {
+			Provider string   `json:"defaultProvider"`
+			Model    string   `json:"defaultModel"`
+			Enabled  []string `json:"enabledModels"`
+		}
+		json.Unmarshal(raw, &set)
+		seen := map[string]bool{}
+		var models []modelChoice
+		add := func(id string) {
+			if id == "" || seen[id] || strings.ContainsAny(id, "*?[") {
+				return
+			}
+			seen[id] = true
+			models = append(models, modelChoice{ID: id, Name: id})
+		}
+		if set.Provider != "" && set.Model != "" {
+			add(set.Provider + "/" + set.Model)
+		}
+		for _, m := range set.Enabled {
+			add(m)
+		}
+		out["models"] = models
+	}
+	b, err := json.Marshal(out)
+	return string(b), err
+}

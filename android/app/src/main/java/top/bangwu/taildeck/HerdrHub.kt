@@ -377,6 +377,24 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
 
     data class Command(val name: String, val description: String, val source: String)
 
+    data class ModelChoice(val id: String, val name: String, val efforts: List<String>, val default: String)
+    data class ModelOptions(val models: List<ModelChoice>, val efforts: List<String>, val custom: Boolean)
+
+    private val modelCache = HashMap<String, ModelOptions>()
+
+    /** Models and reasoning levels the agent can switch to, from its own files on the node. */
+    suspend fun modelOptions(node: String, kind: String): ModelOptions = withContext(Dispatchers.IO) {
+        modelCache["$node|$kind"]?.let { return@withContext it }
+        val o = JSONObject(conn(node).modelOptions(kind))
+        fun strings(a: JSONArray?) = if (a == null) emptyList() else (0 until a.length()).map { a.getString(it) }
+        val arr = o.optJSONArray("models") ?: JSONArray()
+        ModelOptions(
+            models = (0 until arr.length()).map { arr.getJSONObject(it).let { m -> ModelChoice(m.optString("id"), m.optString("name"), strings(m.optJSONArray("efforts")), m.optString("default")) } },
+            efforts = strings(o.optJSONArray("efforts")),
+            custom = o.optBoolean("custom"),
+        ).also { modelCache["$node|$kind"] = it }
+    }
+
     private val commandCache = HashMap<String, Pair<Long, List<Command>>>()
 
     /** Prompt commands and skills for an agent of [kind] in [cwd], cached for a minute. */

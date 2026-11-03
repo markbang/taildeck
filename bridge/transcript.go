@@ -73,6 +73,7 @@ type transcript struct {
 	model  string
 
 	effort, permissionMode, gitBranch, cwd string
+	piModel                                string         // provider/model from pi's model_change entries
 	queue                                  []queuedPrompt // Claude's own queue of prompts typed while it works
 	images                                 *imageStore
 	sidechain                              bool // subagent transcripts are all sidechain
@@ -337,6 +338,9 @@ func (t *transcript) render(matched string) (string, error) {
 	used, model := t.used, t.model
 	if t.kind == "pi" {
 		msgs, used, model = t.piPath()
+		if t.piModel != "" {
+			model = t.piModel
+		}
 	}
 	truncated := t.truncated
 	limit := t.limit
@@ -373,12 +377,15 @@ func (t *transcript) render(matched string) (string, error) {
 
 func (t *transcript) piLine(line []byte) {
 	var e struct {
-		Type      string          `json:"type"`
-		ID        string          `json:"id"`
-		ParentID  *string         `json:"parentId"`
-		Message   json.RawMessage `json:"message"`
-		Summary   string          `json:"summary"`
-		Timestamp json.RawMessage `json:"timestamp"`
+		Type          string          `json:"type"`
+		ID            string          `json:"id"`
+		ParentID      *string         `json:"parentId"`
+		Message       json.RawMessage `json:"message"`
+		Summary       string          `json:"summary"`
+		Timestamp     json.RawMessage `json:"timestamp"`
+		ThinkingLevel string          `json:"thinkingLevel"`
+		Provider      string          `json:"provider"`
+		ModelID       string          `json:"modelId"`
 	}
 	if json.Unmarshal(line, &e) != nil || e.ID == "" {
 		return
@@ -402,6 +409,12 @@ func (t *transcript) piLine(line []byte) {
 			if pe.used == 0 {
 				pe.used = u.Usage.Input + u.Usage.Output + u.Usage.CacheRead + u.Usage.CacheWrite
 			}
+		}
+	case "thinking_level_change":
+		t.effort = e.ThinkingLevel
+	case "model_change":
+		if e.ModelID != "" {
+			t.piModel = e.Provider + "/" + e.ModelID
 		}
 	case "compaction", "branch_summary":
 		if e.Summary != "" {
@@ -887,8 +900,9 @@ func (t *transcript) codexLine(line []byte) {
 			Action    struct {
 				Command []string `json:"command"`
 			} `json:"action"`
-			Model string `json:"model"`
-			Info  *struct {
+			Model  string `json:"model"`
+			Effort string `json:"effort"`
+			Info   *struct {
 				Last struct {
 					Total int64 `json:"total_tokens"`
 				} `json:"last_token_usage"`
@@ -905,6 +919,9 @@ func (t *transcript) codexLine(line []byte) {
 	case "turn_context/":
 		if p.Model != "" {
 			t.model = p.Model
+		}
+		if p.Effort != "" {
+			t.effort = p.Effort
 		}
 	case "event_msg/token_count":
 		if p.Info != nil {
