@@ -9,6 +9,8 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -157,6 +159,7 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
     private val conns = HashMap<String, Herdr>()
     private val profiles = HashMap<String, SshProfile>()
     private val retries = HashMap<String, Job>()
+    private val pending = HashMap<String, Deferred<Herdr?>>()
 
     private val _states = MutableStateFlow<Map<String, HerdrState>>(emptyMap())
     val states: StateFlow<Map<String, HerdrState>> = _states
@@ -197,32 +200,44 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
     fun ensure(node: String, profile: SshProfile) {
         if (profile.auth == SshAuth.PASSWORD && profile.password.isEmpty()) return
         scope.launch {
-            lock.withLock {
-                profiles[node] = profile
-                val current = _states.value[node]
-                if (conns[node] != null && current is HerdrState.Ready) return@withLock
-                if (current == HerdrState.Checking) return@withLock
-                setState(node, HerdrState.Checking)
-            }
-            connect(node)
+            lock.withLock { profiles[node] = profile }
+            open(node)
         }
     }
 
-    private suspend fun connect(node: String) {
-        val profile = profiles[node] ?: return
+    /** The node's connection, opening it (or joining an attempt in progress) when there is none. */
+    private suspend fun open(node: String): Herdr? {
+        val attempt = lock.withLock {
+            conns[node]?.let { return it }
+            pending[node]?.takeIf { it.isActive } ?: scope.async {
+                // A dropped connection keeps its last agent list on screen while it reconnects.
+                if (_states.value[node] !is HerdrState.Ready) setState(node, HerdrState.Checking)
+                connect(node)
+            }.also { pending[node] = it }
+        }
+        return attempt.await()
+    }
+
+    private suspend fun connect(node: String): Herdr? {
+        val profile = lock.withLock {
+            profiles[node] ?: TaildeckApp.instance.store.sshProfile(node)?.also { profiles[node] = it }
+        } ?: return null
+        val listener = Listener(node)
         val result = runCatching {
             val key = if (profile.auth == SshAuth.KEY) keys.paths(profile.keyId) ?: error("SSH key not found") else null
             Tsbridge.connectHerdr(
                 node, profile.port.toLong(), profile.user,
                 if (profile.auth == SshAuth.PASSWORD) profile.password else "",
                 key?.key.orEmpty(), key?.passphrase.orEmpty(), key?.cert.orEmpty(),
-                listener(node),
+                listener,
             )
         }
         lock.withLock {
             result.onSuccess { h ->
-                conns.remove(node)?.close()
-                conns[node] = h
+                listener.herdr = h
+                if (listener.closed) return@onSuccess
+                val old = conns.put(node, h)
+                if (old != null && old !== h) old.close()
             }.onFailure { e ->
                 val msg = e.message.orEmpty()
                 setState(
@@ -236,16 +251,22 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
             }
         }
         if (result.isSuccess) refresh(node)
+        return result.getOrNull()
     }
 
-    private fun listener(node: String) = object : HerdrListener {
+    private inner class Listener(val node: String) : HerdrListener {
+        @Volatile var herdr: Herdr? = null
+        @Volatile var closed = false
+
         override fun onChange() {
             scope.launch { refresh(node) }
         }
 
         override fun onClosed(reason: String) {
+            closed = true
             scope.launch {
-                lock.withLock { conns.remove(node) }
+                // Only forget the connection that closed, not a newer one that replaced it.
+                lock.withLock { if (conns[node] === herdr) conns.remove(node) }
                 // Unexpected drops (network change, sleep) reconnect quietly.
                 if (reason.isNotEmpty() && profiles.containsKey(node)) scheduleRetry(node)
             }
@@ -257,9 +278,7 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
         retries[node] = scope.launch {
             for (wait in listOf(2_000L, 8_000L, 30_000L)) {
                 delay(wait)
-                if (conns[node] != null) return@launch
-                connect(node)
-                if (conns[node] != null) return@launch
+                if (open(node) != null) return@launch
             }
         }
     }
@@ -318,11 +337,17 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
     private fun setState(node: String, state: HerdrState) = _states.update { it + (node to state) }
 
     suspend fun call(node: String, method: String, params: JSONObject): JSONObject = withContext(Dispatchers.IO) {
-        val h = lock.withLock { conns[node] } ?: error("herdr is not connected")
-        JSONObject(h.call(method, params.toString()))
+        JSONObject(conn(node).call(method, params.toString()))
     }
 
-    private suspend fun conn(node: String): Herdr = lock.withLock { conns[node] } ?: error("herdr is not connected")
+    private suspend fun conn(node: String): Herdr = open(node) ?: error(
+        when (val s = _states.value[node]) {
+            HerdrState.NotInstalled -> context.getString(R.string.herdr_not_installed)
+            HerdrState.NotRunning -> context.getString(R.string.herdr_not_running)
+            is HerdrState.Failed -> s.message.ifEmpty { "herdr is not connected" }
+            else -> "herdr is not connected"
+        },
+    )
 
     suspend fun transcript(node: String, pane: String): Transcript = withContext(Dispatchers.IO) {
         Transcript.parse(conn(node).transcript(pane))
@@ -408,17 +433,7 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
         list
     }
 
-    /** Waits for the node's herdr connection, opening it from the saved SSH profile. */
-    private suspend fun awaitConnected(node: String): Boolean {
-        if (lock.withLock { conns[node] } != null) return true
-        val profile = profiles[node] ?: TaildeckApp.instance.store.sshProfile(node) ?: return false
-        ensure(node, profile)
-        repeat(30) {
-            delay(500)
-            if (lock.withLock { conns[node] } != null) return true
-        }
-        return false
-    }
+    private suspend fun awaitConnected(node: String): Boolean = open(node) != null
 
     fun enqueue(node: String, pane: String, text: String) {
         _queues.update { it + ((node to pane) to it[node to pane].orEmpty() + QueuedPrompt(++queueSeq, text)) }
@@ -485,6 +500,8 @@ class HerdrHub(private val context: Context, private val keys: SshKeys) {
             lock.withLock {
                 retries.values.forEach { it.cancel() }
                 retries.clear()
+                pending.values.forEach { it.cancel() }
+                pending.clear()
                 profiles.clear()
                 conns.values.forEach { it.close() }
                 conns.clear()
