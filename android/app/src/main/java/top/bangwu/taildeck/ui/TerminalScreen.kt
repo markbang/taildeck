@@ -2,6 +2,8 @@ package top.bangwu.taildeck.ui
 
 import top.bangwu.taildeck.HerdrState
 import top.bangwu.taildeck.AgentStatus
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Badge
 import androidx.compose.material.icons.outlined.SmartToy
@@ -35,7 +37,6 @@ import androidx.compose.material.icons.outlined.ManageAccounts
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -44,6 +45,8 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.ToggleButton
+import androidx.compose.material3.ToggleButtonDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -260,34 +263,32 @@ fun TerminalScreen(node: String, onBack: () -> Unit, onAgents: () -> Unit) {
 
     Column(Modifier.fillMaxSize().background(Color(TerminalView.BG)).imePadding()) {
         TopAppBar(
-            title = {
-                Column {
-                    Text(title?.ifBlank { null } ?: node, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    val sub = when (val c = conn) {
-                        Conn.Connecting -> stringResource(R.string.ssh_connecting, node)
-                        is Conn.Closed -> stringResource(R.string.ssh_closed) + (if (c.reason.isNotEmpty()) " · ${c.reason}" else "")
-                        else -> profile?.let { "${it.user}@$node:${it.port}" } ?: ""
-                    }
-                    AnimatedContent(sub, transitionSpec = { fadeIn(Motion.slow()).togetherWith(fadeOut(Motion.fast())) }, label = "conn") {
-                        Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
+            title = { Text(title?.ifBlank { null } ?: node, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            subtitle = {
+                val sub = when (val c = conn) {
+                    Conn.Connecting -> stringResource(R.string.ssh_connecting, node)
+                    is Conn.Closed -> stringResource(R.string.ssh_closed) + (if (c.reason.isNotEmpty()) " · ${c.reason}" else "")
+                    else -> profile?.let { "${it.user}@$node:${it.port}" } ?: ""
+                }
+                AnimatedContent(sub, transitionSpec = { fadeIn(Motion.fade()).togetherWith(fadeOut(Motion.fadeFast())) }, label = "conn") {
+                    Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             },
-            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
+            navigationIcon = { IconButton(shapes = IconButtonDefaults.shapes(), onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
             actions = {
                 AnimatedVisibility(conn is Conn.Closed, enter = fadeIn() + scaleIn(initialScale = 0.8f), exit = fadeOut()) {
-                    TextButton(onClick = { if (profile == null) showDialog = true else attempt++ }) { Text(stringResource(R.string.reconnect)) }
+                    TextButton(shapes = ButtonDefaults.shapes(), onClick = { if (profile == null) showDialog = true else attempt++ }) { Text(stringResource(R.string.reconnect)) }
                 }
                 AnimatedVisibility(herdrAgents != null, enter = fadeIn() + scaleIn(initialScale = 0.6f), exit = fadeOut()) {
                     val blocked = herdrAgents.orEmpty().count { it.status == AgentStatus.BLOCKED }
-                    IconButton(onClick = onAgents) {
+                    IconButton(shapes = IconButtonDefaults.shapes(), onClick = onAgents) {
                         BadgedBox(badge = { if (blocked > 0) Badge { Text("$blocked") } }) {
                             Icon(Icons.Outlined.SmartToy, stringResource(R.string.agents_title))
                         }
                     }
                 }
-                IconButton(onClick = { showDialog = true }) { Icon(Icons.Outlined.ManageAccounts, stringResource(R.string.ssh_settings)) }
-                IconButton(onClick = { controller.view?.showKeyboard() }) { Icon(Icons.Outlined.Keyboard, stringResource(R.string.keyboard)) }
+                IconButton(shapes = IconButtonDefaults.shapes(), onClick = { showDialog = true }) { Icon(Icons.Outlined.ManageAccounts, stringResource(R.string.ssh_settings)) }
+                IconButton(shapes = IconButtonDefaults.shapes(), onClick = { controller.view?.showKeyboard() }) { Icon(Icons.Outlined.Keyboard, stringResource(R.string.keyboard)) }
             },
         )
         AndroidView(
@@ -308,23 +309,23 @@ fun TerminalScreen(node: String, onBack: () -> Unit, onAgents: () -> Unit) {
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                FilterChip(
-                    selected = ctrl,
-                    onClick = { ctrl = !ctrl; controller.view?.ctrlArmed = ctrl },
-                    label = { Text("Ctrl", fontFamily = FontFamily.Monospace) },
+                ToggleButton(
+                    checked = ctrl,
+                    onCheckedChange = { ctrl = it; controller.view?.ctrlArmed = it },
+                    shapes = ToggleButtonDefaults.shapes(),
                     modifier = Modifier.padding(horizontal = 2.dp),
-                )
-                FilterChip(
-                    selected = alt,
-                    onClick = { alt = !alt; controller.view?.altArmed = alt },
-                    label = { Text("Alt", fontFamily = FontFamily.Monospace) },
+                ) { Text("Ctrl", fontFamily = FontFamily.Monospace) }
+                ToggleButton(
+                    checked = alt,
+                    onCheckedChange = { alt = it; controller.view?.altArmed = it },
+                    shapes = ToggleButtonDefaults.shapes(),
                     modifier = Modifier.padding(horizontal = 2.dp),
-                )
+                ) { Text("Alt", fontFamily = FontFamily.Monospace) }
                 EXTRA_KEYS.forEach { (label, code) ->
-                    TextButton(onClick = { controller.view?.sendKey(code) }) { Text(label, fontFamily = FontFamily.Monospace) }
+                    TextButton(shapes = ButtonDefaults.shapes(), onClick = { controller.view?.sendKey(code) }) { Text(label, fontFamily = FontFamily.Monospace) }
                 }
                 EXTRA_CHARS.forEach { ch ->
-                    TextButton(onClick = { controller.view?.sendText(ch) }) { Text(ch, fontFamily = FontFamily.Monospace) }
+                    TextButton(shapes = ButtonDefaults.shapes(), onClick = { controller.view?.sendText(ch) }) { Text(ch, fontFamily = FontFamily.Monospace) }
                 }
             }
         }
@@ -381,15 +382,12 @@ private fun SshDialog(node: String, initial: SshProfile, onDismiss: () -> Unit, 
                         modifier = Modifier.weight(1f),
                     )
                 }
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(
-                        SshAuth.TAILSCALE to R.string.ssh_auth_tailscale,
-                        SshAuth.PASSWORD to R.string.ssh_auth_password,
-                        SshAuth.KEY to R.string.ssh_auth_key,
-                    ).forEach { (a, label) ->
-                        FilterChip(selected = auth == a, onClick = { auth = a }, label = { Text(stringResource(label)) })
-                    }
-                }
+                val authLabels = mapOf(
+                    SshAuth.TAILSCALE to R.string.ssh_auth_tailscale,
+                    SshAuth.PASSWORD to R.string.ssh_auth_password,
+                    SshAuth.KEY to R.string.ssh_auth_key,
+                )
+                ChoiceGroup(authLabels.keys.toList(), auth, onSelect = { auth = it }) { Text(stringResource(authLabels.getValue(it)), maxLines = 1) }
                 when (auth) {
                     SshAuth.PASSWORD -> {
                         OutlinedTextField(
@@ -419,12 +417,12 @@ private fun SshDialog(node: String, initial: SshProfile, onDismiss: () -> Unit, 
                                 }
                             }
                         }
-                        TextButton(onClick = { importing = true }) { Text(stringResource(R.string.import_key)) }
+                        TextButton(shapes = ButtonDefaults.shapes(), onClick = { importing = true }) { Text(stringResource(R.string.import_key)) }
                         val selected = identities.firstOrNull { it.id == keyId }
                         if (selected != null && !selected.hasCert) {
                             Text(stringResource(R.string.ssh_key_hint), style = MaterialTheme.typography.bodySmall)
                             Text(selected.publicKey, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            TextButton(onClick = { context.copy(selected.publicKey) }) { Text(stringResource(R.string.copy_public_key)) }
+                            TextButton(shapes = ButtonDefaults.shapes(), onClick = { context.copy(selected.publicKey) }) { Text(stringResource(R.string.copy_public_key)) }
                         }
                     }
                     SshAuth.TAILSCALE -> Unit
@@ -433,11 +431,12 @@ private fun SshDialog(node: String, initial: SshProfile, onDismiss: () -> Unit, 
         },
         confirmButton = {
             TextButton(
+                shapes = ButtonDefaults.shapes(),
                 onClick = { onConnect(SshProfile(user, portNum ?: 22, auth, if (auth == SshAuth.PASSWORD) password else "", keyId), rememberPw) },
                 enabled = user.isNotBlank() && portNum != null && (auth != SshAuth.KEY || identities.any { it.id == keyId }),
             ) { Text(stringResource(R.string.connect)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+        dismissButton = { TextButton(shapes = ButtonDefaults.shapes(), onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 
     if (importing) {

@@ -45,9 +45,11 @@ fun TaildeckTheme(content: @Composable () -> Unit) {
     MaterialExpressiveTheme(colorScheme = scheme, motionScheme = MotionScheme.expressive(), content = content)
 }
 
-/** Shared motion tokens (Material 3 emphasized easing). */
+/** Expressive motion tokens: spatial springs for size and position, effects springs for fades and colors. */
 object Motion {
-    private val emphasized = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0f, 0f, 1f)
-    fun <T> slow() = androidx.compose.animation.core.tween<T>(350, easing = emphasized)
-    fun <T> fast() = androidx.compose.animation.core.tween<T>(200, easing = emphasized)
+    private val scheme = MotionScheme.expressive()
+    fun <T> slow() = scheme.slowSpatialSpec<T>()
+    fun <T> fast() = scheme.fastSpatialSpec<T>()
+    fun <T> fade() = scheme.defaultEffectsSpec<T>()
+    fun <T> fadeFast() = scheme.fastEffectsSpec<T>()
 }

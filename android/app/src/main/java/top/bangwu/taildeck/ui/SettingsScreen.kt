@@ -22,6 +22,8 @@ import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.VpnKeyOff
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -75,7 +77,7 @@ fun SettingsScreen(onBack: () -> Unit, onLogs: () -> Unit, onLoggedOut: () -> Un
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.settings)) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
+                navigationIcon = { IconButton(shapes = IconButtonDefaults.shapes(), onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
             )
         },
     ) { padding ->
@@ -109,7 +111,7 @@ fun SettingsScreen(onBack: () -> Unit, onLogs: () -> Unit, onLoggedOut: () -> Un
                     headlineContent = { Text(if (id.builtin) stringResource(R.string.key_builtin) else id.name) },
                     supportingContent = { Text(identitySubtitle(id), maxLines = 2, overflow = TextOverflow.Ellipsis) },
                     trailingContent = {
-                        IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
+                        IconButton(shapes = IconButtonDefaults.shapes(), onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
                         DropdownMenu(menu, onDismissRequest = { menu = false }) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.copy_public_key)) },
@@ -176,11 +178,11 @@ fun SettingsScreen(onBack: () -> Unit, onLogs: () -> Unit, onLoggedOut: () -> Un
             onDismissRequest = { deleting = null },
             text = { Text(stringResource(R.string.delete_key_confirm, id.name)) },
             confirmButton = {
-                TextButton(onClick = { app.keys.delete(id.id); deleting = null }) {
+                TextButton(shapes = ButtonDefaults.shapes(), onClick = { app.keys.delete(id.id); deleting = null }) {
                     Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
                 }
             },
-            dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.cancel)) } },
+            dismissButton = { TextButton(shapes = ButtonDefaults.shapes(), onClick = { deleting = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
 
@@ -189,7 +191,7 @@ fun SettingsScreen(onBack: () -> Unit, onLogs: () -> Unit, onLoggedOut: () -> Un
             onDismissRequest = { confirmLogout = false },
             text = { Text(stringResource(R.string.logout_confirm)) },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(shapes = ButtonDefaults.shapes(), onClick = {
                     confirmLogout = false
                     scope.launch {
                         app.tailscale.logout()
@@ -197,7 +199,7 @@ fun SettingsScreen(onBack: () -> Unit, onLogs: () -> Unit, onLoggedOut: () -> Un
                     }
                 }) { Text(stringResource(R.string.logout), color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { confirmLogout = false }) { Text(stringResource(R.string.cancel)) } },
+            dismissButton = { TextButton(shapes = ButtonDefaults.shapes(), onClick = { confirmLogout = false }) { Text(stringResource(R.string.cancel)) } },
         )
     }
 }
@@ -222,10 +224,10 @@ fun LogsScreen(onBack: () -> Unit) {
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.logs)) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
+                navigationIcon = { IconButton(shapes = IconButtonDefaults.shapes(), onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
                 actions = {
-                    IconButton(onClick = { logs = app.tailscale.logs() }) { Icon(Icons.Outlined.Refresh, stringResource(R.string.reload)) }
-                    IconButton(onClick = { context.copy(logs) }) { Icon(Icons.Outlined.ContentCopy, stringResource(R.string.copy)) }
+                    IconButton(shapes = IconButtonDefaults.shapes(), onClick = { logs = app.tailscale.logs() }) { Icon(Icons.Outlined.Refresh, stringResource(R.string.reload)) }
+                    IconButton(shapes = IconButtonDefaults.shapes(), onClick = { context.copy(logs) }) { Icon(Icons.Outlined.ContentCopy, stringResource(R.string.copy)) }
                 },
             )
         },

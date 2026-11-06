@@ -41,10 +41,12 @@ import androidx.compose.material.icons.outlined.RadioButtonChecked
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -197,7 +199,7 @@ private fun ToolLine(m: ChatMessage, ctx: ToolContext, modifier: Modifier = Modi
     ) {
         Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
             when {
-                (m.pending || m.background) && ctx.live -> CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.8.dp)
+                (m.pending || m.background) && ctx.live -> LoadingIndicator(Modifier.size(16.dp))
                 m.error -> Icon(Icons.Outlined.ErrorOutline, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
                 else -> Icon(toolIcon(m.kind), null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -248,7 +250,7 @@ fun ToolGroup(row: ToolGroupRow, ctx: ToolContext, modifier: Modifier, item: @Co
         ) {
             val running = if (row.open && ctx.live) row.items.lastOrNull { it.role == "tool" && it.pending } else null
             Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
-                if (running != null) CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.8.dp)
+                if (running != null) LoadingIndicator(Modifier.size(16.dp))
                 else Icon(Icons.Outlined.Layers, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Spacer(Modifier.width(8.dp))
@@ -405,7 +407,7 @@ fun TurnFooter(row: TurnFooterRow, modifier: Modifier) {
         DateUtils.formatDateTime(context, it, DateUtils.FORMAT_SHOW_TIME or date)
     }
     Row(modifier.padding(start = 0.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = { context.copy(row.text) }, Modifier.size(32.dp)) {
+        IconButton(onClick = { context.copy(row.text) }, shapes = IconButtonDefaults.shapes(), modifier = Modifier.size(32.dp)) {
             Icon(Icons.Outlined.ContentCopy, stringResource(R.string.agent_copy_turn), Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         val label = if (showTime || worked == null) time else worked
@@ -515,7 +517,7 @@ fun ContextChip(used: Long, window: Long, model: String) {
     if (details) {
         AlertDialog(
             onDismissRequest = { details = false },
-            confirmButton = { TextButton(onClick = { details = false }) { Text(stringResource(android.R.string.ok)) } },
+            confirmButton = { TextButton(shapes = ButtonDefaults.shapes(), onClick = { details = false }) { Text(stringResource(android.R.string.ok)) } },
             title = { Text(stringResource(R.string.context_title)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {

@@ -31,9 +31,10 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.NetworkPing
 import androidx.compose.material.icons.outlined.Radar
 import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -41,6 +42,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -111,24 +113,25 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
                         Text(name)
                     }
                 },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
+                navigationIcon = { IconButton(shapes = IconButtonDefaults.shapes(), onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
             )
         },
     ) { padding ->
         LazyColumn(Modifier.padding(padding).fillMaxSize()) {
             item {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(onClick = { onSsh(name) }, modifier = Modifier.weight(1f)) {
+                    FilledTonalButton(shapes = ButtonDefaults.shapes(), onClick = { onSsh(name) }, modifier = Modifier.weight(1f)) {
                         Icon(Icons.Outlined.Terminal, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(stringResource(R.string.ssh))
                     }
-                    FilledTonalButton(onClick = { context.openService("http://$name/", name, onOpenInApp) }, modifier = Modifier.weight(1f)) {
+                    FilledTonalButton(shapes = ButtonDefaults.shapes(), onClick = { context.openService("http://$name/", name, onOpenInApp) }, modifier = Modifier.weight(1f)) {
                         Icon(Icons.Outlined.Language, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(stringResource(R.string.open_web))
                     }
                     OutlinedButton(
+                        shapes = ButtonDefaults.shapes(),
                         onClick = {
                             val ip = node?.ipv4 ?: return@OutlinedButton
                             pinging = true
@@ -148,14 +151,14 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
                         enabled = node != null && !pinging,
                         modifier = Modifier.weight(1f),
                     ) {
-                        if (pinging) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        if (pinging) LoadingIndicator(Modifier.size(20.dp))
                         else Icon(Icons.Outlined.NetworkPing, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(stringResource(R.string.ping))
                     }
                 }
                 AnimatedVisibility(ping != null, enter = expandVertically(Motion.slow()) + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-                    AnimatedContent(ping.orEmpty(), transitionSpec = { fadeIn(Motion.slow()).togetherWith(fadeOut(Motion.fast())) }, label = "ping") {
+                    AnimatedContent(ping.orEmpty(), transitionSpec = { fadeIn(Motion.fade()).togetherWith(fadeOut(Motion.fadeFast())) }, label = "ping") {
                         Text(it, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                     }
                 }
@@ -170,6 +173,7 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
                 Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(stringResource(R.string.services), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                     TextButton(
+                        shapes = ButtonDefaults.shapes(),
                         onClick = {
                             scanning = true
                             scanResult = null
@@ -180,12 +184,12 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
                         },
                         enabled = !scanning && node?.online == true,
                     ) {
-                        if (scanning) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        if (scanning) LoadingIndicator(Modifier.size(20.dp))
                         else Icon(Icons.Outlined.Radar, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(stringResource(if (scanning) R.string.scanning else R.string.scan_ports))
                     }
-                    IconButton(onClick = { draft = ServiceDraft(null, "", "http", "", "/") }) {
+                    IconButton(shapes = IconButtonDefaults.shapes(), onClick = { draft = ServiceDraft(null, "", "http", "", "/") }) {
                         Icon(Icons.Outlined.Add, stringResource(R.string.add_service))
                     }
                 }
@@ -332,7 +336,7 @@ private fun ServiceRow(
         headlineContent = { Text(svc.name) },
         supportingContent = { Text(svc.url, fontFamily = FontFamily.Monospace) },
         trailingContent = {
-            IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
+            IconButton(shapes = IconButtonDefaults.shapes(), onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
             DropdownMenu(menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text(stringResource(R.string.open_in_app)) }, onClick = { menu = false; onOpenInApp() })
                 DropdownMenuItem(text = { Text(stringResource(R.string.open_in_browser)) }, onClick = { menu = false; onOpenInBrowser() })
@@ -357,11 +361,7 @@ private fun ServiceDialog(initial: ServiceDraft, onDismiss: () -> Unit, onSave: 
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(d.first, { d = it to d.second }, label = { Text(stringResource(R.string.service_name)) }, singleLine = true)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("http", "https").forEach {
-                        FilterChip(selected = scheme == it, onClick = { scheme = it }, label = { Text(it) })
-                    }
-                }
+                ChoiceGroup(listOf("http", "https"), scheme, onSelect = { scheme = it }) { Text(it) }
                 OutlinedTextField(
                     d.second,
                     { d = d.first to it.filter(Char::isDigit).take(5) },
@@ -373,10 +373,10 @@ private fun ServiceDialog(initial: ServiceDraft, onDismiss: () -> Unit, onSave: 
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(ServiceDraft(initial.id, d.first, scheme, d.second, path)) }, enabled = portValid) {
+            TextButton(shapes = ButtonDefaults.shapes(), onClick = { onSave(ServiceDraft(initial.id, d.first, scheme, d.second, path)) }, enabled = portValid) {
                 Text(stringResource(R.string.save))
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+        dismissButton = { TextButton(shapes = ButtonDefaults.shapes(), onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }

@@ -14,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -127,6 +128,7 @@ fun KeyImportDialog(onDismiss: () -> Unit, onImported: (SshIdentity) -> Unit) {
         },
         confirmButton = {
             TextButton(
+                shapes = ButtonDefaults.shapes(),
                 enabled = key.isNotBlank() && !busy,
                 onClick = {
                     busy = true
@@ -142,7 +144,7 @@ fun KeyImportDialog(onDismiss: () -> Unit, onImported: (SshIdentity) -> Unit) {
                 },
             ) { Text(stringResource(R.string.save)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+        dismissButton = { TextButton(shapes = ButtonDefaults.shapes(), onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -150,7 +152,7 @@ fun KeyImportDialog(onDismiss: () -> Unit, onImported: (SshIdentity) -> Unit) {
 private fun FieldHeader(label: String, onPick: () -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-        TextButton(onClick = onPick) {
+        TextButton(shapes = ButtonDefaults.shapes(), onClick = onPick) {
             Icon(Icons.Outlined.FolderOpen, null)
             Text(" " + stringResource(R.string.pick_file))
         }

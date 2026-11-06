@@ -34,6 +34,7 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Widgets
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -44,8 +45,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.ShortNavigationBar
+import androidx.compose.material3.ShortNavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -89,21 +90,12 @@ fun HomeScreen(onNode: (String) -> Unit, onOpenInApp: (Service) -> Unit, onSetti
         topBar = {
             Column {
                 TopAppBar(
-                    title = {
-                        Column {
-                            Text(status?.tailnet ?: stringResource(R.string.app_name))
-                            if (status != null) {
-                                val online = status.peers.count { it.online }
-                                Text(
-                                    stringResource(R.string.n_online, online, status.peers.size),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
+                    title = { Text(status?.tailnet ?: stringResource(R.string.app_name)) },
+                    subtitle = {
+                        if (status != null) Text(stringResource(R.string.n_online, status.peers.count { it.online }, status.peers.size))
                     },
                     actions = {
-                        IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, stringResource(R.string.settings)) }
+                        IconButton(shapes = IconButtonDefaults.shapes(), onClick = onSettings) { Icon(Icons.Outlined.Settings, stringResource(R.string.settings)) }
                     },
                 )
                 AnimatedVisibility(state.phase != Phase.RUNNING, enter = fadeIn(), exit = fadeOut()) {
@@ -112,14 +104,14 @@ fun HomeScreen(onNode: (String) -> Unit, onOpenInApp: (Service) -> Unit, onSetti
             }
         },
         bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
+            ShortNavigationBar {
+                ShortNavigationBarItem(
                     selected = tab == 0,
                     onClick = { tab = 0 },
                     icon = { Icon(Icons.Outlined.Dns, null) },
                     label = { Text(stringResource(R.string.tab_nodes)) },
                 )
-                NavigationBarItem(
+                ShortNavigationBarItem(
                     selected = tab == 1,
                     onClick = { tab = 1 },
                     icon = { Icon(Icons.Outlined.Widgets, null) },
@@ -132,8 +124,8 @@ fun HomeScreen(onNode: (String) -> Unit, onOpenInApp: (Service) -> Unit, onSetti
             targetState = tab,
             transitionSpec = {
                 val dir = if (targetState > initialState) 1 else -1
-                (slideInHorizontally(Motion.slow()) { dir * it / 8 } + fadeIn(Motion.slow()))
-                    .togetherWith(slideOutHorizontally(Motion.fast()) { -dir * it / 8 } + fadeOut(Motion.fast()))
+                (slideInHorizontally(Motion.slow()) { dir * it / 8 } + fadeIn(Motion.fade()))
+                    .togetherWith(slideOutHorizontally(Motion.fast()) { -dir * it / 8 } + fadeOut(Motion.fadeFast()))
             },
             label = "tab",
         ) { current ->
@@ -270,7 +262,7 @@ private fun ServicesTab(padding: PaddingValues, services: List<Service>, peers: 
                     headlineContent = { Text(svc.name) },
                     supportingContent = { Text(svc.url, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     trailingContent = {
-                        IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
+                        IconButton(shapes = IconButtonDefaults.shapes(), onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
                         DropdownMenu(menu, onDismissRequest = { menu = false }) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.open_in_app)) },

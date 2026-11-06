@@ -15,8 +15,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.outlined.CloseFullscreen
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -24,6 +25,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -127,6 +129,7 @@ fun NewAgentDialog(node: String, agents: List<HerdrAgent>, onDismiss: () -> Unit
         },
         confirmButton = {
             TextButton(
+                shapes = ButtonDefaults.shapes(),
                 enabled = !busy && nameError == null,
                 onClick = {
                     busy = true
@@ -139,11 +142,11 @@ fun NewAgentDialog(node: String, agents: List<HerdrAgent>, onDismiss: () -> Unit
                     }
                 },
             ) {
-                if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                if (busy) LoadingIndicator(Modifier.size(22.dp))
                 else Text(stringResource(R.string.agent_start))
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text(stringResource(R.string.cancel)) } },
+        dismissButton = { TextButton(shapes = ButtonDefaults.shapes(), onClick = onDismiss, enabled = !busy) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -196,6 +199,7 @@ fun RenameAgentDialog(node: String, pane: String, current: String?, onDismiss: (
         },
         confirmButton = {
             TextButton(
+                shapes = ButtonDefaults.shapes(),
                 enabled = valid && !busy,
                 onClick = {
                     busy = true
@@ -208,7 +212,7 @@ fun RenameAgentDialog(node: String, pane: String, current: String?, onDismiss: (
                 },
             ) { Text(stringResource(R.string.save)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text(stringResource(R.string.cancel)) } },
+        dismissButton = { TextButton(shapes = ButtonDefaults.shapes(), onClick = onDismiss, enabled = !busy) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -221,9 +225,9 @@ fun FullscreenComposer(title: String, draft: String, onDraft: (String) -> Unit, 
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onClose) { Icon(Icons.Outlined.CloseFullscreen, stringResource(R.string.agent_exit_fullscreen)) }
+                    IconButton(shapes = IconButtonDefaults.shapes(), onClick = onClose) { Icon(Icons.Outlined.CloseFullscreen, stringResource(R.string.agent_exit_fullscreen)) }
                     Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                    FilledIconButton(onClick = onSend, enabled = canSend && draft.isNotBlank()) {
+                    FilledIconButton(shapes = IconButtonDefaults.shapes(), onClick = onSend, enabled = canSend && draft.isNotBlank()) {
                         Icon(Icons.AutoMirrored.Filled.Send, stringResource(R.string.agent_send))
                     }
                     Spacer(Modifier.width(8.dp))

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.ui.Alignment
@@ -211,7 +212,7 @@ fun CodeBlock(code: String, label: String = "", maxLines: Int = Int.MAX_VALUE, c
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(label, Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (copyable) {
-                        IconButton(onClick = { context.copy(code) }, Modifier.size(28.dp)) {
+                        IconButton(onClick = { context.copy(code) }, shapes = IconButtonDefaults.shapes(), modifier = Modifier.size(28.dp)) {
                             Icon(Icons.Outlined.ContentCopy, stringResource(R.string.copy), Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }

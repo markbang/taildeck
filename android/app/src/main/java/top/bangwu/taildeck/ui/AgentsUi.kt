@@ -65,12 +65,13 @@ import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Terminal
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.MediumExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -240,7 +241,7 @@ fun AgentsScreen(node: String, onBack: () -> Unit, onAgent: (String) -> Unit, on
     Scaffold(
         floatingActionButton = {
             AnimatedVisibility(state is HerdrState.Ready, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
-                ExtendedFloatingActionButton(
+                MediumExtendedFloatingActionButton(
                     onClick = { creating = true },
                     icon = { Icon(Icons.Outlined.Add, null) },
                     text = { Text(stringResource(R.string.agent_new)) },
@@ -249,14 +250,10 @@ fun AgentsScreen(node: String, onBack: () -> Unit, onAgent: (String) -> Unit, on
         },
         topBar = {
             TopAppBar(
-                title = {
-                    Column {
-                        Text(stringResource(R.string.agents_title))
-                        Text("herdr · $node", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
-                actions = { IconButton(onClick = onTerminal) { Icon(Icons.Outlined.Terminal, stringResource(R.string.ssh)) } },
+                title = { Text(stringResource(R.string.agents_title)) },
+                subtitle = { Text("herdr · $node") },
+                navigationIcon = { IconButton(shapes = IconButtonDefaults.shapes(), onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
+                actions = { IconButton(shapes = IconButtonDefaults.shapes(), onClick = onTerminal) { Icon(Icons.Outlined.Terminal, stringResource(R.string.ssh)) } },
             )
         },
     ) { padding ->
@@ -266,7 +263,7 @@ fun AgentsScreen(node: String, onBack: () -> Unit, onAgent: (String) -> Unit, on
                     is HerdrState.Ready -> if (state.agents.isEmpty()) {
                         Centered(stringResource(R.string.agents_none))
                     } else {
-                        LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 88.dp)) {
+                        LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 120.dp)) {
                             // Agents waiting on you, and finished ones you haven't opened, come first.
                             val needsYou = state.agents.filter { it.status == AgentStatus.BLOCKED || it.status == AgentStatus.DONE && (node to it.paneId) in unread }
                                 .sortedBy { if (it.status == AgentStatus.BLOCKED) 0 else 1 }
@@ -619,22 +616,20 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = {
-                    Column {
-                        Text(agent?.label ?: pane, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            AgentDot(status, Modifier.size(7.dp))
-                            Spacer(Modifier.width(6.dp))
-                            AnimatedContent(statusLabel(status) + (agent?.title?.let { " · $it" } ?: ""), label = "status") {
-                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
+                title = { Text(agent?.label ?: pane, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                subtitle = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AgentDot(status, Modifier.size(7.dp))
+                        Spacer(Modifier.width(6.dp))
+                        AnimatedContent(statusLabel(status) + (agent?.title?.let { " · $it" } ?: ""), label = "status") {
+                            Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
+                navigationIcon = { IconButton(shapes = IconButtonDefaults.shapes(), onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
                 actions = {
-                    IconButton(onClick = onTerminal) { Icon(Icons.Outlined.Terminal, stringResource(R.string.ssh)) }
-                    IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
+                    IconButton(shapes = IconButtonDefaults.shapes(), onClick = onTerminal) { Icon(Icons.Outlined.Terminal, stringResource(R.string.ssh)) }
+                    IconButton(shapes = IconButtonDefaults.shapes(), onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
                     DropdownMenu(menu, onDismissRequest = { menu = false }) {
                         DropdownMenuItem(text = { Text(stringResource(R.string.agent_rename)) }, onClick = { menu = false; renaming = true })
                         if (kind in setOf("claude", "codex", "pi", "omp")) {
@@ -698,6 +693,7 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
                                         if (t.truncated) {
                                             var loading by remember { mutableStateOf(false) }
                                             TextButton(
+                                                shapes = ButtonDefaults.shapes(),
                                                 enabled = !loading,
                                                 onClick = {
                                                     loading = true
@@ -837,8 +833,8 @@ private fun QueueTrack(queued: List<QueuedPrompt>, onEdit: (QueuedPrompt) -> Uni
                     Icon(Icons.Outlined.Schedule, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.width(8.dp))
                     Text(q.text, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    IconButton(onClick = { onEdit(q) }) { Icon(Icons.Outlined.Edit, stringResource(R.string.agent_queue_edit), Modifier.size(18.dp)) }
-                    IconButton(onClick = { onSendNow(q) }) { Icon(Icons.AutoMirrored.Filled.Send, stringResource(R.string.agent_queue_send_now), Modifier.size(18.dp)) }
+                    IconButton(shapes = IconButtonDefaults.shapes(), onClick = { onEdit(q) }) { Icon(Icons.Outlined.Edit, stringResource(R.string.agent_queue_edit), Modifier.size(18.dp)) }
+                    IconButton(shapes = IconButtonDefaults.shapes(), onClick = { onSendNow(q) }) { Icon(Icons.AutoMirrored.Filled.Send, stringResource(R.string.agent_queue_send_now), Modifier.size(18.dp)) }
                 }
             }
         }
@@ -1004,7 +1000,7 @@ private fun Composer(
     var attachMenu by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.Bottom) {
         Box(Modifier.padding(bottom = 4.dp)) {
-            IconButton(onClick = { attachMenu = true }) { Icon(Icons.Outlined.Add, stringResource(R.string.attach)) }
+            IconButton(shapes = IconButtonDefaults.shapes(), onClick = { attachMenu = true }) { Icon(Icons.Outlined.Add, stringResource(R.string.attach)) }
             DropdownMenu(attachMenu, onDismissRequest = { attachMenu = false }) {
                 DropdownMenuItem(text = { Text(stringResource(R.string.attach_image)) }, leadingIcon = { Icon(Icons.Outlined.Image, null) }, onClick = { attachMenu = false; onPickImages() })
                 DropdownMenuItem(text = { Text(stringResource(R.string.attach_file)) }, leadingIcon = { Icon(Icons.Outlined.AttachFile, null) }, onClick = { attachMenu = false; onPickFiles() })
@@ -1017,8 +1013,8 @@ private fun Composer(
             placeholder = { Text(stringResource(if (queues) R.string.agent_queue_hint else R.string.agent_message_hint), maxLines = 1, overflow = TextOverflow.Ellipsis) },
             shape = RoundedCornerShape(22.dp),
             trailingIcon = when {
-                draft.isBlank() && canVoice -> { { IconButton(onClick = onVoice) { Icon(Icons.Outlined.Mic, stringResource(R.string.agent_voice)) } } }
-                draft.lines().size >= 3 || draft.length > 120 -> { { IconButton(onClick = onFullscreen) { Icon(Icons.Outlined.OpenInFull, stringResource(R.string.agent_fullscreen)) } } }
+                draft.isBlank() && canVoice -> { { IconButton(shapes = IconButtonDefaults.shapes(), onClick = onVoice) { Icon(Icons.Outlined.Mic, stringResource(R.string.agent_voice)) } } }
+                draft.lines().size >= 3 || draft.length > 120 -> { { IconButton(shapes = IconButtonDefaults.shapes(), onClick = onFullscreen) { Icon(Icons.Outlined.OpenInFull, stringResource(R.string.agent_fullscreen)) } } }
                 else -> null
             },
         )
@@ -1044,7 +1040,7 @@ private fun Composer(
         ) {
             val tint = if (enabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
             when {
-                sending -> CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = tint)
+                sending -> LoadingIndicator(Modifier.size(22.dp), color = tint)
                 queues -> Icon(Icons.Outlined.Schedule, null, tint = tint)
                 else -> Icon(Icons.AutoMirrored.Filled.Send, null, tint = tint)
             }
@@ -1071,7 +1067,7 @@ private fun TerminalKeys(screen: String, picking: Boolean, onKeys: (List<String>
         Spacer(Modifier.size(8.dp))
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             APPROVAL_KEYS.forEach { (label, key) ->
-                FilledTonalButton(onClick = { onKeys(listOf(key)) }, enabled = !picking, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp)) {
+                FilledTonalButton(shapes = ButtonDefaults.shapes(), onClick = { onKeys(listOf(key)) }, enabled = !picking, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp)) {
                     Text(label, fontFamily = FontFamily.Monospace)
                 }
             }

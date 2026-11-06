@@ -57,7 +57,8 @@ import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Update
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -325,7 +326,7 @@ fun PromptPanel(
                 AgentDot(top.bangwu.taildeck.AgentStatus.BLOCKED)
                 Spacer(Modifier.width(8.dp))
                 Text(prompt?.question ?: stringResource(R.string.agent_needs_you), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                TextButton(onClick = onTerminal) { Text(stringResource(R.string.ssh)) }
+                TextButton(shapes = ButtonDefaults.shapes(), onClick = onTerminal) { Text(stringResource(R.string.ssh)) }
             }
             val ctx = prompt?.context
             if (ctx != null) {
@@ -390,6 +391,7 @@ fun PromptPanel(
                         val submit = prompt.submit
                         if (submit != null && prompt.cursor != null) {
                             FilledTonalButton(
+                                shapes = ButtonDefaults.shapes(),
                                 onClick = {
                                     act {
                                         val now = confirm(prompt) ?: return@act
@@ -402,7 +404,7 @@ fun PromptPanel(
                         }
                     }
                 }
-                TextButton(onClick = { showKeys = !showKeys }) {
+                TextButton(shapes = ButtonDefaults.shapes(), onClick = { showKeys = !showKeys }) {
                     Text(stringResource(if (showKeys) R.string.agent_hide_terminal_keys else R.string.agent_terminal_keys))
                 }
             }
@@ -421,7 +423,7 @@ private fun PromptContextView(ctx: PromptContext) {
             Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(start = 10.dp), verticalAlignment = Alignment.Top) {
                     Text(cmd, Modifier.weight(1f).padding(vertical = 8.dp), fontFamily = FontFamily.Monospace, fontSize = 12.5.sp, maxLines = 6, overflow = TextOverflow.Ellipsis)
-                    IconButton(onClick = { context.copy(cmd) }, Modifier.size(32.dp)) { Icon(Icons.Outlined.ContentCopy, stringResource(R.string.copy), Modifier.size(15.dp)) }
+                    IconButton(onClick = { context.copy(cmd) }, shapes = IconButtonDefaults.shapes(), modifier = Modifier.size(32.dp)) { Icon(Icons.Outlined.ContentCopy, stringResource(R.string.copy), Modifier.size(15.dp)) }
                 }
             }
         }
@@ -462,7 +464,7 @@ private fun PromptOptionRow(
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { onSubmitText() }),
-                trailingIcon = { IconButton(onClick = onSubmitText) { Icon(Icons.Outlined.Done, null) } },
+                trailingIcon = { IconButton(shapes = IconButtonDefaults.shapes(), onClick = onSubmitText) { Icon(Icons.Outlined.Done, null) } },
                 colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent),
             )
         } else {
@@ -506,7 +508,7 @@ fun WorkingBar(activity: String?, since: Long, subagents: Int, onSubagents: () -
                 Spacer(Modifier.width(10.dp))
                 Text(activity ?: stringResource(R.string.agent_working), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 elapsed?.let { Text(stopwatch(it), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                TextButton(onClick = onStop) {
+                TextButton(shapes = ButtonDefaults.shapes(), onClick = onStop) {
                     Icon(Icons.Outlined.Stop, null, Modifier.size(14.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(stringResource(R.string.agent_stop))
@@ -797,7 +799,7 @@ fun ModelChoices(kind: String, o: HerdrHub.ModelOptions, settings: AgentSettings
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send, autoCorrectEnabled = false),
                     keyboardActions = KeyboardActions(onSend = { if (custom.isNotEmpty()) onCommand(modelCommand(kind, custom, null), custom, null) }),
                     trailingIcon = {
-                        IconButton(onClick = { onCommand(modelCommand(kind, custom, null), custom, null) }, enabled = enabled && custom.isNotEmpty()) { Icon(Icons.Outlined.Done, null) }
+                        IconButton(shapes = IconButtonDefaults.shapes(), onClick = { onCommand(modelCommand(kind, custom, null), custom, null) }, enabled = enabled && custom.isNotEmpty()) { Icon(Icons.Outlined.Done, null) }
                     },
                 )
             }
@@ -806,18 +808,12 @@ fun ModelChoices(kind: String, o: HerdrHub.ModelOptions, settings: AgentSettings
                 Spacer(Modifier.size(16.dp))
                 Text(stringResource(R.string.session_effort), style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.size(6.dp))
-                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    efforts.forEach { e ->
-                        val selected = settings.effort.equals(e, ignoreCase = true)
-                        androidx.compose.material3.FilterChip(
-                            selected = selected,
-                            enabled = enabled,
-                            onClick = { if (!selected) onCommand(effortCommand(kind, e), null, e) },
-                            label = { Text(effortLabel(e)) },
-                            leadingIcon = if (selected) { { Icon(Icons.Outlined.Done, null, Modifier.size(16.dp)) } } else null,
-                        )
-                    }
-                }
+                ChoiceGroup(
+                    efforts,
+                    efforts.firstOrNull { it.equals(settings.effort, ignoreCase = true) },
+                    onSelect = { e -> onCommand(effortCommand(kind, e), null, e) },
+                    enabled = enabled,
+                ) { Text(effortLabel(it), maxLines = 1) }
                 current?.default?.takeIf { it.isNotEmpty() }?.let {
                     Text(stringResource(R.string.effort_default, effortLabel(it)), Modifier.padding(top = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -972,7 +968,7 @@ fun AttachmentStrip(items: List<Attachment>, onRemove: (Attachment) -> Unit) {
                                 Text("!", color = MaterialTheme.colorScheme.onErrorContainer)
                             }
                             a.path == null -> Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                LoadingIndicator(Modifier.size(22.dp))
                             }
                         }
                     }
@@ -1001,7 +997,7 @@ fun RestartBar(label: String, phase: RestartPhase, since: Long, onDismiss: () ->
         Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             when (phase) {
                 RestartPhase.Running -> {
-                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    LoadingIndicator(Modifier.size(18.dp))
                     Spacer(Modifier.width(10.dp))
                     Text(stringResource(R.string.agent_restarting, label), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                     liveElapsed(since)?.let { Text(stopwatch(it), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -1010,8 +1006,8 @@ fun RestartBar(label: String, phase: RestartPhase, since: Long, onDismiss: () ->
                     Icon(Icons.Outlined.Update, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
                     Spacer(Modifier.width(10.dp))
                     Text(phase.message, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 3)
-                    IconButton(onClick = onRetry) { Icon(Icons.Outlined.Refresh, stringResource(R.string.retry)) }
-                    IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, stringResource(R.string.close)) }
+                    IconButton(shapes = IconButtonDefaults.shapes(), onClick = onRetry) { Icon(Icons.Outlined.Refresh, stringResource(R.string.retry)) }
+                    IconButton(shapes = IconButtonDefaults.shapes(), onClick = onDismiss) { Icon(Icons.Outlined.Close, stringResource(R.string.close)) }
                 }
             }
         }

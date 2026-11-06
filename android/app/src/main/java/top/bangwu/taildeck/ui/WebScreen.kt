@@ -45,6 +45,8 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -179,29 +181,18 @@ fun WebScreen(url: String, title: String, onBack: () -> Unit) {
         topBar = {
             Column {
                 TopAppBar(
-                    title = {
-                        Column {
-                            Text(pageTitle.ifEmpty { title }, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                pageUrl,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    },
+                    title = { Text(pageTitle.ifEmpty { title }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    subtitle = { Text(pageUrl, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     navigationIcon = {
-                        IconButton(onClick = onBack) { Icon(Icons.Default.Close, stringResource(R.string.back)) }
+                        IconButton(shapes = IconButtonDefaults.shapes(), onClick = onBack) { Icon(Icons.Default.Close, stringResource(R.string.back)) }
                     },
                     actions = {
                         AnimatedVisibility(canGoBack, enter = fadeIn(), exit = fadeOut()) {
-                            IconButton(onClick = { webView?.goBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
+                            IconButton(shapes = IconButtonDefaults.shapes(), onClick = { webView?.goBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) }
                         }
-                        IconButton(onClick = { webView?.reload() }) { Icon(Icons.Outlined.Refresh, stringResource(R.string.reload)) }
+                        IconButton(shapes = IconButtonDefaults.shapes(), onClick = { webView?.reload() }) { Icon(Icons.Outlined.Refresh, stringResource(R.string.reload)) }
                         Box {
-                            IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
+                            IconButton(shapes = IconButtonDefaults.shapes(), onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
                             DropdownMenu(menu, onDismissRequest = { menu = false }) {
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.open_in_browser)) },
@@ -401,7 +392,7 @@ fun WebScreen(url: String, title: String, onBack: () -> Unit) {
                 }
             },
             confirmButton = {},
-            dismissButton = { TextButton(onClick = { linkMenu = null }) { Text(stringResource(R.string.cancel)) } },
+            dismissButton = { TextButton(shapes = ButtonDefaults.shapes(), onClick = { linkMenu = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
 
@@ -410,8 +401,8 @@ fun WebScreen(url: String, title: String, onBack: () -> Unit) {
             onDismissRequest = { externalPrompt = null },
             title = { Text(stringResource(R.string.web_open_app_title)) },
             text = { Text(p.uri.toString(), maxLines = 4, overflow = TextOverflow.Ellipsis, fontFamily = FontFamily.Monospace) },
-            confirmButton = { TextButton(onClick = { externalPrompt = null; openExternal(p.uri) }) { Text(stringResource(R.string.web_open)) } },
-            dismissButton = { TextButton(onClick = { externalPrompt = null }) { Text(stringResource(R.string.cancel)) } },
+            confirmButton = { TextButton(shapes = ButtonDefaults.shapes(), onClick = { externalPrompt = null; openExternal(p.uri) }) { Text(stringResource(R.string.web_open)) } },
+            dismissButton = { TextButton(shapes = ButtonDefaults.shapes(), onClick = { externalPrompt = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
 
@@ -421,12 +412,12 @@ fun WebScreen(url: String, title: String, onBack: () -> Unit) {
             title = { Text(stringResource(R.string.web_cert_title)) },
             text = { Text(stringResource(R.string.web_cert_body, p.host)) },
             confirmButton = {
-                TextButton(onClick = { trustedHosts += p.host; p.handler.proceed(); sslPrompt = null }) {
+                TextButton(shapes = ButtonDefaults.shapes(), onClick = { trustedHosts += p.host; p.handler.proceed(); sslPrompt = null }) {
                     Text(stringResource(R.string.web_continue))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { p.handler.cancel(); sslPrompt = null }) { Text(stringResource(R.string.cancel)) }
+                TextButton(shapes = ButtonDefaults.shapes(), onClick = { p.handler.cancel(); sslPrompt = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -450,10 +441,10 @@ fun WebScreen(url: String, title: String, onBack: () -> Unit) {
                 }
             },
             confirmButton = {
-                TextButton(onClick = { p.handler.proceed(user, pass); authPrompt = null }) { Text(stringResource(R.string.sign_in)) }
+                TextButton(shapes = ButtonDefaults.shapes(), onClick = { p.handler.proceed(user, pass); authPrompt = null }) { Text(stringResource(R.string.sign_in)) }
             },
             dismissButton = {
-                TextButton(onClick = { p.handler.cancel(); authPrompt = null }) { Text(stringResource(R.string.cancel)) }
+                TextButton(shapes = ButtonDefaults.shapes(), onClick = { p.handler.cancel(); authPrompt = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }

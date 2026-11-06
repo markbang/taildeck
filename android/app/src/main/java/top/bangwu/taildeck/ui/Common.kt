@@ -12,7 +12,9 @@ import android.os.Build
 import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
@@ -28,7 +30,7 @@ import java.time.OffsetDateTime
 fun StatusDot(online: Boolean, modifier: Modifier = Modifier) {
     val color by animateColorAsState(
         if (online) OnlineGreen else MaterialTheme.colorScheme.outlineVariant,
-        Motion.slow(),
+        Motion.fade(),
         label = "status",
     )
     Box(modifier.size(8.dp).background(color, CircleShape))
@@ -114,4 +116,38 @@ fun RefreshBox(refreshing: Boolean, onRefresh: () -> Unit, modifier: Modifier = 
         },
         content = content,
     )
+}
+
+/** Single choice as a connected button group; long option lists scroll instead of squeezing. */
+@Composable
+fun <T> ChoiceGroup(
+    options: List<T>,
+    selected: T?,
+    onSelect: (T) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    label: @Composable (T) -> Unit,
+) {
+    val scroll = options.size > 3
+    androidx.compose.foundation.layout.Row(
+        modifier.then(
+            if (scroll) Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState())
+            else Modifier.fillMaxWidth(),
+        ),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(androidx.compose.material3.ButtonGroupDefaults.ConnectedSpaceBetween),
+    ) {
+        options.forEachIndexed { i, option ->
+            androidx.compose.material3.ToggleButton(
+                checked = option == selected,
+                onCheckedChange = { if (option != selected) onSelect(option) },
+                enabled = enabled,
+                shapes = when (i) {
+                    0 -> androidx.compose.material3.ButtonGroupDefaults.connectedLeadingButtonShapes()
+                    options.lastIndex -> androidx.compose.material3.ButtonGroupDefaults.connectedTrailingButtonShapes()
+                    else -> androidx.compose.material3.ButtonGroupDefaults.connectedMiddleButtonShapes()
+                },
+                modifier = if (scroll) Modifier else Modifier.weight(1f),
+            ) { label(option) }
+        }
+    }
 }

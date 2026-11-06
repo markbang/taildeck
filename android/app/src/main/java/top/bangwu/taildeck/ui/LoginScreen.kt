@@ -26,9 +26,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -105,7 +106,7 @@ fun LoginScreen(onReady: () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
         )
 
-        TextButton(onClick = { advanced = !advanced }, enabled = !busy) {
+        TextButton(shapes = ButtonDefaults.shapes(), onClick = { advanced = !advanced }, enabled = !busy) {
             Text(stringResource(R.string.advanced))
             Icon(if (advanced) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
         }
@@ -145,8 +146,8 @@ fun LoginScreen(onReady: () -> Unit) {
         AnimatedContent(
             targetState = stage,
             transitionSpec = {
-                (fadeIn(Motion.slow()) + slideInVertically(Motion.slow()) { it / 6 })
-                    .togetherWith(fadeOut(Motion.fast()))
+                (fadeIn(Motion.fade()) + slideInVertically(Motion.slow()) { it / 6 })
+                    .togetherWith(fadeOut(Motion.fadeFast()))
                     .using(SizeTransform(clip = false))
             },
             label = "login",
@@ -154,6 +155,7 @@ fun LoginScreen(onReady: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 when (current) {
                     0 -> Button(
+                        shapes = ButtonDefaults.shapes(),
                         onClick = {
                             app.store.hostname = hostname.trim('-')
                             app.store.controlUrl = controlUrl
@@ -164,18 +166,18 @@ fun LoginScreen(onReady: () -> Unit) {
                     ) { Text(if (state.phase == Phase.ERROR) stringResource(R.string.retry) else stringResource(R.string.sign_in)) }
                     2 -> {
                         Text(stringResource(R.string.waiting_login), style = MaterialTheme.typography.bodyMedium)
-                        Button(onClick = { state.authUrl?.let(::openUrl) }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                        Button(shapes = ButtonDefaults.shapes(), onClick = { state.authUrl?.let(::openUrl) }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                             Text(stringResource(R.string.open_login))
                         }
                     }
                     else -> Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        LoadingIndicator(Modifier.size(24.dp))
                         Spacer(Modifier.size(12.dp))
                         Text(stringResource(R.string.starting))
                     }
                 }
                 if (current != 0) {
-                    OutlinedButton(onClick = { app.tailscale.stop() }, modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(shapes = ButtonDefaults.shapes(), onClick = { app.tailscale.stop() }, modifier = Modifier.fillMaxWidth()) {
                         Text(stringResource(R.string.cancel))
                     }
                 }
