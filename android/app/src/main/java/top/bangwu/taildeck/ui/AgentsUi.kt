@@ -66,6 +66,7 @@ import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -85,7 +86,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -260,7 +260,7 @@ fun AgentsScreen(node: String, onBack: () -> Unit, onAgent: (String) -> Unit, on
             )
         },
     ) { padding ->
-        PullToRefreshBox(refreshing, onRefresh = { refreshing = true }, modifier = Modifier.padding(padding).fillMaxSize()) {
+        RefreshBox(refreshing, onRefresh = { refreshing = true }, modifier = Modifier.padding(padding).fillMaxSize()) {
             AnimatedContent(state?.javaClass, label = "agents") { _ ->
                 when (state) {
                     is HerdrState.Ready -> if (state.agents.isEmpty()) {
@@ -288,7 +288,7 @@ fun AgentsScreen(node: String, onBack: () -> Unit, onAgent: (String) -> Unit, on
                     HerdrState.NotInstalled -> Centered(stringResource(R.string.herdr_not_installed))
                     HerdrState.NotRunning -> Centered(stringResource(R.string.herdr_not_running))
                     is HerdrState.Failed -> Centered(state.message)
-                    else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                    else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingIndicator() }
                 }
             }
         }
@@ -670,7 +670,7 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
                 val t = transcript
                 when {
                     t == null && error != null -> Centered(error.orEmpty())
-                    t == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                    t == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { LoadingIndicator() }
                     t.screenMode -> ScreenView(t.screen)
                     else -> {
                         val working = status == AgentStatus.WORKING

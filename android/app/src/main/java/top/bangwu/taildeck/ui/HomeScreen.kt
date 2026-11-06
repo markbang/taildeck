@@ -34,14 +34,14 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Widgets
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -50,7 +50,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -108,7 +107,7 @@ fun HomeScreen(onNode: (String) -> Unit, onOpenInApp: (Service) -> Unit, onSetti
                     },
                 )
                 AnimatedVisibility(state.phase != Phase.RUNNING, enter = fadeIn(), exit = fadeOut()) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    LinearWavyProgressIndicator(Modifier.fillMaxWidth())
                 }
             }
         },
@@ -172,7 +171,7 @@ private fun NodesTab(
             it.tags.any { t -> t.contains(query, true) } || it.os.contains(query, true)
     }
 
-    PullToRefreshBox(refreshing, onRefresh = { refreshing = true }, modifier = Modifier.padding(padding).fillMaxSize()) {
+    RefreshBox(refreshing, onRefresh = { refreshing = true }, modifier = Modifier.padding(padding).fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize()) {
             item {
                 OutlinedTextField(
@@ -199,7 +198,7 @@ private fun NodesTab(
             if (!running && peers.isEmpty()) {
                 item {
                     Row(Modifier.fillMaxWidth().padding(32.dp), horizontalArrangement = Arrangement.Center) {
-                        CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                        LoadingIndicator(Modifier.size(32.dp))
                         Spacer(Modifier.width(12.dp))
                         Text(stringResource(R.string.starting))
                     }

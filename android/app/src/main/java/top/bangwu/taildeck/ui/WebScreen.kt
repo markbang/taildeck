@@ -51,7 +51,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
@@ -223,7 +223,7 @@ fun WebScreen(url: String, title: String, onBack: () -> Unit) {
                     },
                 )
                 AnimatedVisibility(progress in 1..99, enter = fadeIn(), exit = fadeOut()) {
-                    LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
+                    LinearWavyProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
                 }
             }
         },

@@ -58,6 +58,7 @@ import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Update
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -183,7 +184,7 @@ private fun ImageViewer(ref: String, onClose: () -> Unit) {
                         .graphicsLayer(scaleX = scale, scaleY = scale, translationX = dx, translationY = dy),
                     contentScale = ContentScale.Fit,
                 )
-            } ?: CircularProgressIndicator()
+            } ?: LoadingIndicator()
         }
     }
 }
@@ -585,7 +586,7 @@ fun SubagentSheet(node: String, pane: String, task: ChatMessage, onDismiss: () -
                     Text(error.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (task.output.isNotEmpty()) Markdown(task.output)
                 }
-                else -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                else -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { LoadingIndicator() }
             }
             Spacer(Modifier.size(24.dp))
         }
@@ -740,7 +741,7 @@ fun ModelSheet(
     }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         val o = options
-        if (o == null) Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        if (o == null) Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { LoadingIndicator() }
         else ModelChoices(kind, o, settings, enabled, onCommand)
     }
 }
@@ -889,7 +890,7 @@ fun CommandSheet(commands: List<HerdrHub.Command>, loading: Boolean, onPick: (St
                         }
                     }
                 }
-                if (loading) item { Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) } }
+                if (loading) item { Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) { LoadingIndicator(Modifier.size(36.dp)) } }
                 else if (shown.isEmpty()) item { Text(stringResource(R.string.commands_none), Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
         }

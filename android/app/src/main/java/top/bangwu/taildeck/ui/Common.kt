@@ -100,3 +100,18 @@ fun Context.copyBrowserLink(tailnetUrl: String) {
 fun Context.openService(url: String, title: String, openInApp: (String, String) -> Unit) {
     if (TaildeckApp.instance.store.openInApp) openInApp(url, title) else openInBrowser(url)
 }
+
+/** Pull to refresh with the expressive loading indicator. */
+@Composable
+fun RefreshBox(refreshing: Boolean, onRefresh: () -> Unit, modifier: Modifier = Modifier, content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit) {
+    val state = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+    androidx.compose.material3.pulltorefresh.PullToRefreshBox(
+        refreshing, onRefresh, modifier, state = state,
+        indicator = {
+            androidx.compose.material3.pulltorefresh.PullToRefreshDefaults.LoadingIndicator(
+                state, refreshing, Modifier.align(androidx.compose.ui.Alignment.TopCenter),
+            )
+        },
+        content = content,
+    )
+}
