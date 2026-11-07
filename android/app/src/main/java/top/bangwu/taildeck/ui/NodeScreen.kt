@@ -1,5 +1,19 @@
 package top.bangwu.taildeck.ui
 
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonGroupDefaults
+import androidx.compose.material3.LargeFlexibleTopAppBar
+import androidx.compose.material3.ListItemShapes
+import androidx.compose.material3.SegmentedListItem
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.fadeOut
@@ -103,37 +117,47 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
         if (node?.online == true) app.store.sshProfile(name)?.let { app.herdr.ensure(name, it) }
     }
 
+    val bar = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
+        modifier = Modifier.nestedScroll(bar.nestedScrollConnection),
+        containerColor = Surfaces.page,
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        StatusDot(node?.online == true)
-                        Spacer(Modifier.width(10.dp))
-                        Text(name)
-                    }
+            LargeFlexibleTopAppBar(
+                scrollBehavior = bar,
+                colors = Surfaces.bar(),
+                title = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                subtitle = {
+                    if (node != null) Text(listOf(osLabel(node.os), stringResource(if (node.online) R.string.online else R.string.offline)).joinToString(" · "))
                 },
                 navigationIcon = { IconButton(shapes = IconButtonDefaults.shapes(), onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
             )
         },
     ) { padding ->
-        LazyColumn(Modifier.padding(padding).fillMaxSize()) {
+        LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
             item {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(shapes = ButtonDefaults.shapes(), onClick = { onSsh(name) }, modifier = Modifier.weight(1f)) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween)) {
+                    Button(
+                        shapes = ButtonDefaults.shapes(ButtonGroupDefaults.connectedLeadingButtonShapes().shape, ButtonGroupDefaults.connectedLeadingButtonShapes().pressedShape),
+                        onClick = { onSsh(name) },
+                        modifier = Modifier.weight(1.2f).heightIn(min = ButtonDefaults.MediumContainerHeight),
+                    ) {
                         Icon(Icons.Outlined.Terminal, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(stringResource(R.string.ssh))
                     }
-                    FilledTonalButton(shapes = ButtonDefaults.shapes(), onClick = { context.openService("http://$name/", name, onOpenInApp) }, modifier = Modifier.weight(1f)) {
+                    FilledTonalButton(
+                        shapes = ButtonDefaults.shapes(ButtonGroupDefaults.connectedMiddleButtonShapes().shape, ButtonGroupDefaults.connectedMiddleButtonShapes().pressedShape),
+                        onClick = { context.openService("http://$name/", name, onOpenInApp) },
+                        modifier = Modifier.weight(1f).heightIn(min = ButtonDefaults.MediumContainerHeight),
+                    ) {
                         Icon(Icons.Outlined.Language, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(stringResource(R.string.open_web))
                     }
-                    OutlinedButton(
-                        shapes = ButtonDefaults.shapes(),
+                    FilledTonalButton(
+                        shapes = ButtonDefaults.shapes(ButtonGroupDefaults.connectedTrailingButtonShapes().shape, ButtonGroupDefaults.connectedTrailingButtonShapes().pressedShape),
                         onClick = {
-                            val ip = node?.ipv4 ?: return@OutlinedButton
+                            val ip = node?.ipv4 ?: return@FilledTonalButton
                             pinging = true
                             scope.launch {
                                 ping = runCatching {
@@ -149,7 +173,7 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
                             }
                         },
                         enabled = node != null && !pinging,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).heightIn(min = ButtonDefaults.MediumContainerHeight),
                     ) {
                         if (pinging) LoadingIndicator(Modifier.size(20.dp))
                         else Icon(Icons.Outlined.NetworkPing, null, Modifier.size(18.dp))
@@ -159,7 +183,7 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
                 }
                 AnimatedVisibility(ping != null, enter = expandVertically(Motion.slow()) + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                     AnimatedContent(ping.orEmpty(), transitionSpec = { fadeIn(Motion.fade()).togetherWith(fadeOut(Motion.fadeFast())) }, label = "ping") {
-                        Text(it, Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                        Text(it, Modifier.padding(horizontal = 24.dp), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                     }
                 }
             }
@@ -169,9 +193,8 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
             if (node != null) item { NodeInfo(node) }
 
             item {
-                HorizontalDivider(Modifier.padding(top = 8.dp))
-                Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(stringResource(R.string.services), style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                GroupHeader(stringResource(R.string.services)) {
+                    Spacer(Modifier.weight(1f))
                     TextButton(
                         shapes = ButtonDefaults.shapes(),
                         onClick = {
@@ -199,7 +222,7 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
                 item(key = "scan") {
                     val known = services.mapNotNull { portOf(it.url) }.toSet()
                     val fresh = ports.filterNot { it in known }
-                    Column(Modifier.animateItem().padding(horizontal = 16.dp).animateContentSize(Motion.slow())) {
+                    Column(Modifier.animateItem().padding(horizontal = 24.dp).animateContentSize(Motion.slow())) {
                         if (ports.isEmpty()) {
                             Text(stringResource(R.string.scan_none), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         } else {
@@ -225,15 +248,15 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
                 item {
                     Text(
                         stringResource(R.string.no_services),
-                        Modifier.padding(16.dp),
+                        Modifier.padding(horizontal = 32.dp, vertical = 8.dp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
-            items(services, key = { it.id }) { svc ->
+            segmentedItems(services, key = { it.id }) { svc, shapes ->
                 ServiceRow(
                     svc,
-                    modifier = Modifier.animateItem(),
+                    shapes,
                     onOpen = { context.openService(svc.url, svc.name, onOpenInApp) },
                     onOpenInApp = { onOpenInApp(svc.url, svc.name) },
                     onOpenInBrowser = { context.openInBrowser(svc.url) },
@@ -272,58 +295,57 @@ private fun draftOf(svc: Service): ServiceDraft {
 @Composable
 private fun NodeInfo(node: Node) {
     val context = LocalContext.current
-    Column(Modifier.padding(vertical = 4.dp)) {
-        InfoRow(stringResource(R.string.node_addresses)) {
-            Column {
-                (listOf(node.dnsName) + node.ips).filter { it.isNotEmpty() }.forEach { addr ->
-                    Text(addr, fontFamily = FontFamily.Monospace, modifier = Modifier.clickable { context.copy(addr) })
-                }
-            }
+    val rows = mutableListOf<Segment>()
+    val addresses = (listOf(node.dnsName) + node.ips).filter { it.isNotEmpty() }
+    rows += { s ->
+        InfoRow(stringResource(R.string.node_addresses), s, onClick = { context.copy(node.ipv4 ?: addresses.first()) }) {
+            Column { addresses.forEach { addr -> Text(addr, fontFamily = FontFamily.Monospace, modifier = Modifier.clickable { context.copy(addr) }) } }
         }
-        InfoRow(stringResource(R.string.node_os)) { Text(osLabel(node.os)) }
-        node.user?.let { InfoRow(stringResource(R.string.node_owner)) { Text(it) } }
+    }
+    node.user?.let { u -> rows += { s -> InfoRow(stringResource(R.string.node_owner), s) { Text(u) } } }
         val connection = when {
             !node.online -> relativeTime(node.lastSeen)?.let { stringResource(R.string.last_seen, it) } ?: stringResource(R.string.offline)
             node.curAddr != null -> stringResource(R.string.direct, node.curAddr)
             node.active && node.relay != null -> stringResource(R.string.relay, node.relay)
             else -> stringResource(R.string.idle)
         }
-        InfoRow(stringResource(R.string.node_connection)) { Text(connection) }
-        if (node.tags.isNotEmpty() || node.exitNodeOption) {
-            InfoRow(stringResource(R.string.node_tags)) {
+    rows += { s -> InfoRow(stringResource(R.string.node_connection), s) { Text(connection) } }
+    if (node.tags.isNotEmpty() || node.exitNodeOption) {
+        rows += { s ->
+            InfoRow(stringResource(R.string.node_tags), s) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     node.tags.forEach { FilterChip(selected = false, onClick = {}, label = { Text(it) }) }
                     if (node.exitNodeOption) FilterChip(selected = true, onClick = {}, label = { Text(stringResource(R.string.exit_node_option)) })
                 }
             }
         }
-        if (node.routes.isNotEmpty()) {
-            InfoRow(stringResource(R.string.node_routes)) { Text(node.routes.joinToString("\n"), fontFamily = FontFamily.Monospace) }
-        }
-        node.keyExpiry?.let { InfoRow(stringResource(R.string.node_key_expiry)) { Text(it.substringBefore('T')) } }
-        if (node.rxBytes > 0 || node.txBytes > 0) {
-            InfoRow(stringResource(R.string.node_traffic)) { Text("↓ ${formatBytes(node.rxBytes)}   ↑ ${formatBytes(node.txBytes)}") }
-        }
     }
+    if (node.routes.isNotEmpty()) {
+        rows += { s -> InfoRow(stringResource(R.string.node_routes), s) { Text(node.routes.joinToString("\n"), fontFamily = FontFamily.Monospace) } }
+    }
+    node.keyExpiry?.let { k -> rows += { s -> InfoRow(stringResource(R.string.node_key_expiry), s) { Text(k.substringBefore('T')) } } }
+    if (node.rxBytes > 0 || node.txBytes > 0) {
+        rows += { s -> InfoRow(stringResource(R.string.node_traffic), s) { Text("↓ ${formatBytes(node.rxBytes)}   ↑ ${formatBytes(node.txBytes)}") } }
+    }
+    GroupHeader(stringResource(R.string.node_details))
+    SegmentedGroup(rows)
 }
 
 @Composable
-private fun InfoRow(label: String, content: @Composable () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
-        Text(
-            label,
-            Modifier.width(96.dp),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        content()
-    }
+private fun InfoRow(label: String, shapes: ListItemShapes, onClick: () -> Unit = {}, content: @Composable () -> Unit) {
+    SegmentedListItem(
+        onClick = onClick,
+        shapes = shapes,
+        colors = Surfaces.itemColors(),
+        overlineContent = { Text(label) },
+        content = content,
+    )
 }
 
 @Composable
 private fun ServiceRow(
     svc: Service,
-    modifier: Modifier,
+    shapes: ListItemShapes,
     onOpen: () -> Unit,
     onOpenInApp: () -> Unit,
     onOpenInBrowser: () -> Unit,
@@ -332,20 +354,32 @@ private fun ServiceRow(
     onDelete: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
-    ListItem(
-        headlineContent = { Text(svc.name) },
+    SegmentedListItem(
+        onClick = onOpen,
+        shapes = shapes,
+        colors = Surfaces.itemColors(),
+        content = { Text(svc.name) },
         supportingContent = { Text(svc.url, fontFamily = FontFamily.Monospace) },
         trailingContent = {
             IconButton(shapes = IconButtonDefaults.shapes(), onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
-            DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text(stringResource(R.string.open_in_app)) }, onClick = { menu = false; onOpenInApp() })
-                DropdownMenuItem(text = { Text(stringResource(R.string.open_in_browser)) }, onClick = { menu = false; onOpenInBrowser() })
-                DropdownMenuItem(text = { Text(stringResource(R.string.copy_link)) }, onClick = { menu = false; onCopyLink() })
-                DropdownMenuItem(text = { Text(stringResource(R.string.edit)) }, onClick = { menu = false; onEdit() })
-                DropdownMenuItem(text = { Text(stringResource(R.string.delete)) }, onClick = { menu = false; onDelete() })
-            }
+            GroupMenu(
+                menu,
+                { menu = false },
+                {
+                    MenuItem(text = { Text(stringResource(R.string.open_in_app)) }, leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, null) }, onClick = { menu = false; onOpenInApp() })
+                    MenuItem(text = { Text(stringResource(R.string.open_in_browser)) }, leadingIcon = { Icon(Icons.Outlined.Language, null) }, onClick = { menu = false; onOpenInBrowser() })
+                    MenuItem(text = { Text(stringResource(R.string.copy_link)) }, leadingIcon = { Icon(Icons.Outlined.Link, null) }, onClick = { menu = false; onCopyLink() })
+                },
+                {
+                    MenuItem(text = { Text(stringResource(R.string.edit)) }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { menu = false; onEdit() })
+                    MenuItem(
+                        text = { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) },
+                        leadingIcon = { Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error) },
+                        onClick = { menu = false; onDelete() },
+                    )
+                },
+            )
         },
-        modifier = modifier.clickable(onClick = onOpen),
     )
 }
 

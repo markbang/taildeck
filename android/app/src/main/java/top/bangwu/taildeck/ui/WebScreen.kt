@@ -193,18 +193,18 @@ fun WebScreen(url: String, title: String, onBack: () -> Unit) {
                         IconButton(shapes = IconButtonDefaults.shapes(), onClick = { webView?.reload() }) { Icon(Icons.Outlined.Refresh, stringResource(R.string.reload)) }
                         Box {
                             IconButton(shapes = IconButtonDefaults.shapes(), onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
-                            DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                                DropdownMenuItem(
+                            GroupMenu(menu, onDismissRequest = { menu = false }) {
+                                MenuItem(
                                     text = { Text(stringResource(R.string.open_in_browser)) },
                                     leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, null) },
                                     onClick = { menu = false; context.openInBrowser(pageUrl) },
                                 )
-                                DropdownMenuItem(
+                                MenuItem(
                                     text = { Text(stringResource(R.string.web_copy_link)) },
                                     leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) },
                                     onClick = { menu = false; context.copy(pageUrl) },
                                 )
-                                DropdownMenuItem(
+                                MenuItem(
                                     text = { Text(stringResource(R.string.web_share)) },
                                     leadingIcon = { Icon(Icons.Outlined.Share, null) },
                                     onClick = { menu = false; share(pageUrl) },

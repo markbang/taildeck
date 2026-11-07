@@ -1,5 +1,6 @@
 package top.bangwu.taildeck.ui
 
+import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.fadeOut
@@ -91,9 +92,24 @@ fun LoginScreen(onReady: () -> Unit) {
             .padding(horizontal = 24.dp, vertical = 32.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Spacer(Modifier.height(32.dp))
-        Text(stringResource(R.string.app_name), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-        Text(stringResource(R.string.login_title), style = MaterialTheme.typography.headlineMedium)
+        Spacer(Modifier.height(24.dp))
+        // Login is the app's hero moment: the mark changes shape as sign-in moves along.
+        val c = MaterialTheme.colorScheme
+        ShapeBadge(
+            when {
+                state.authUrl != null -> androidx.compose.material3.MaterialShapes.SoftBurst
+                busy -> androidx.compose.material3.MaterialShapes.Cookie9Sided
+                else -> androidx.compose.material3.MaterialShapes.Cookie12Sided
+            },
+            c.primaryContainer,
+            size = 112.dp,
+            spin = busy,
+        ) {
+            Icon(Icons.Outlined.Hub, null, Modifier.size(48.dp), tint = c.onPrimaryContainer)
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(stringResource(R.string.app_name), style = MaterialTheme.typography.labelLargeEmphasized, color = c.primary)
+        Text(stringResource(R.string.login_title), style = MaterialTheme.typography.displaySmallEmphasized)
         Text(stringResource(R.string.login_desc), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))
 

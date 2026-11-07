@@ -1,5 +1,18 @@
 package top.bangwu.taildeck.ui
 
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.outlined.PhoneAndroid
+import androidx.compose.material3.Badge
+import androidx.compose.material3.LargeFlexibleTopAppBar
+import androidx.compose.material3.ListItemShapes
+import androidx.compose.material3.MaterialShapes
+import androidx.compose.material3.SegmentedListItem
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.slideOutHorizontally
@@ -86,11 +99,16 @@ fun HomeScreen(onNode: (String) -> Unit, onOpenInApp: (Service) -> Unit, onSetti
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
+    val bar = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
+        modifier = Modifier.nestedScroll(bar.nestedScrollConnection),
+        containerColor = Surfaces.page,
         topBar = {
             Column {
-                TopAppBar(
-                    title = { Text(status?.tailnet ?: stringResource(R.string.app_name)) },
+                LargeFlexibleTopAppBar(
+                    scrollBehavior = bar,
+                    colors = Surfaces.bar(),
+                    title = { Text(status?.tailnet ?: stringResource(R.string.app_name), maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     subtitle = {
                         if (status != null) Text(stringResource(R.string.n_online, status.peers.count { it.online }, status.peers.size))
                     },
@@ -104,7 +122,7 @@ fun HomeScreen(onNode: (String) -> Unit, onOpenInApp: (Service) -> Unit, onSetti
             }
         },
         bottomBar = {
-            ShortNavigationBar {
+            ShortNavigationBar(containerColor = Surfaces.page) {
                 ShortNavigationBarItem(
                     selected = tab == 0,
                     onClick = { tab = 0 },
@@ -164,28 +182,26 @@ private fun NodesTab(
     }
 
     RefreshBox(refreshing, onRefresh = { refreshing = true }, modifier = Modifier.padding(padding).fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
             item {
-                OutlinedTextField(
+                TextField(
                     value = query,
                     onValueChange = { query = it },
                     placeholder = { Text(stringResource(R.string.search_nodes)) },
                     leadingIcon = { Icon(Icons.Outlined.Search, null) },
                     singleLine = true,
+                    shape = CircleShape,
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Surfaces.item,
+                        unfocusedContainerColor = Surfaces.item,
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                    ),
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
             if (self != null && query.isBlank()) {
-                item {
-                    ListItem(
-                        overlineContent = { Text(stringResource(R.string.this_device)) },
-                        headlineContent = { Text(self.name) },
-                        supportingContent = { Text(self.ips.joinToString("  "), fontFamily = FontFamily.Monospace) },
-                        leadingContent = { StatusDot(running) },
-                        modifier = Modifier.clickable { self.ipv4?.let(context::copy) },
-                    )
-                    HorizontalDivider()
-                }
+                item { SelfCard(self, running) { self.ipv4?.let(context::copy) } }
             }
             if (!running && peers.isEmpty()) {
                 item {
@@ -204,19 +220,45 @@ private fun NodesTab(
                     )
                 }
             }
-            items(filtered, key = { it.id }) { node ->
-                Box(Modifier.animateItem()) {
-                    NodeRow(node, services.count { it.node == node.name }) { onNode(node.name) }
-                }
+            if (filtered.isNotEmpty()) item(key = "nodes") { GroupHeader(stringResource(R.string.tab_nodes)) }
+            segmentedItems(filtered, key = { it.id }) { node, shapes ->
+                NodeRow(node, services.count { it.node == node.name }, shapes) { onNode(node.name) }
+            }
+        }
+    }
+}
+
+/** This device, the one hero card on the home screen. */
+@Composable
+private fun SelfCard(self: Node, running: Boolean, onClick: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    Surface(
+        onClick = onClick,
+        color = c.primaryContainer,
+        shape = MaterialTheme.shapes.extraLargeIncreased,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+            ShapeBadge(MaterialShapes.Cookie12Sided, c.primary, size = 56.dp, spin = !running) {
+                Icon(Icons.Outlined.PhoneAndroid, null, Modifier.size(28.dp), tint = c.onPrimary)
+            }
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(R.string.this_device), style = MaterialTheme.typography.labelLarge, color = c.onPrimaryContainer.copy(alpha = 0.75f))
+                Text(self.name, style = MaterialTheme.typography.titleLargeEmphasized, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(self.ips.joinToString("  "), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, maxLines = 2)
             }
         }
     }
 }
 
 @Composable
-private fun NodeRow(node: Node, serviceCount: Int, onClick: () -> Unit) {
-    ListItem(
-        headlineContent = { Text(node.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+private fun NodeRow(node: Node, serviceCount: Int, shapes: ListItemShapes, onClick: () -> Unit) {
+    SegmentedListItem(
+        onClick = onClick,
+        shapes = shapes,
+        colors = Surfaces.itemColors(),
+        content = { Text(node.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
             val parts = buildList {
                 add(osLabel(node.os))
@@ -226,13 +268,14 @@ private fun NodeRow(node: Node, serviceCount: Int, onClick: () -> Unit) {
             }
             Text(parts.joinToString(" · "), maxLines = 1, overflow = TextOverflow.Ellipsis)
         },
-        leadingContent = { StatusDot(node.online) },
+        leadingContent = { NodeAvatar(node) },
         trailingContent = {
             if (serviceCount > 0) {
-                Text("$serviceCount", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Badge(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer) {
+                    Text("$serviceCount", style = MaterialTheme.typography.labelMediumEmphasized)
+                }
             }
         },
-        modifier = Modifier.clickable(onClick = onClick),
     )
 }
 
@@ -246,35 +289,36 @@ private fun ServicesTab(padding: PaddingValues, services: List<Service>, peers: 
         return
     }
     val online = peers.associate { it.name to it.online }
-    LazyColumn(Modifier.padding(padding).fillMaxSize()) {
+    LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
         services.groupBy { it.node }.toSortedMap().forEach { (node, list) ->
             item(key = "h:$node") {
-                Row(Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    StatusDot(online[node] == true)
+                GroupHeader(node, Modifier.animateItem()) {
                     Spacer(Modifier.width(8.dp))
-                    Text(node, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                    StatusDot(online[node] == true)
                 }
             }
-            items(list, key = { it.id }) { svc ->
+            segmentedItems(list, key = { it.id }) { svc, shapes ->
                 var menu by remember { mutableStateOf(false) }
-                ListItem(
-                    modifier = Modifier.animateItem().clickable { context.openService(svc.url, svc.name) { _, _ -> onOpenInApp(svc) } },
-                    headlineContent = { Text(svc.name) },
+                SegmentedListItem(
+                    onClick = { context.openService(svc.url, svc.name) { _, _ -> onOpenInApp(svc) } },
+                    shapes = shapes,
+                    colors = Surfaces.itemColors(),
+                    content = { Text(svc.name) },
                     supportingContent = { Text(svc.url, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     trailingContent = {
                         IconButton(shapes = IconButtonDefaults.shapes(), onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
-                        DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(
+                        GroupMenu(menu, onDismissRequest = { menu = false }) {
+                            MenuItem(
                                 text = { Text(stringResource(R.string.open_in_app)) },
                                 leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, null) },
                                 onClick = { menu = false; onOpenInApp(svc) },
                             )
-                            DropdownMenuItem(
+                            MenuItem(
                                 text = { Text(stringResource(R.string.open_in_browser)) },
                                 leadingIcon = { Icon(Icons.Outlined.Language, null) },
                                 onClick = { menu = false; context.openInBrowser(svc.url) },
                             )
-                            DropdownMenuItem(
+                            MenuItem(
                                 text = { Text(stringResource(R.string.copy_link)) },
                                 leadingIcon = { Icon(Icons.Outlined.Link, null) },
                                 onClick = { menu = false; context.copyBrowserLink(svc.url) },

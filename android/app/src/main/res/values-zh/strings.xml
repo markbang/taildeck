@@ -34,6 +34,8 @@
     <string name="node_connection">连接</string>
     <string name="node_key_expiry">密钥过期</string>
     <string name="node_traffic">流量</string>
+    <string name="node_details">详情</string>
+    <string name="general">通用</string>
     <string name="direct">直连 · %1$s</string>
     <string name="relay">中继 · %1$s</string>
     <string name="idle">空闲</string>

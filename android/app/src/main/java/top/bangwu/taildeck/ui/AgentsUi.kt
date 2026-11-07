@@ -1,5 +1,13 @@
 package top.bangwu.taildeck.ui
 
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.RestartAlt
+import androidx.compose.material3.LargeFlexibleTopAppBar
+import androidx.compose.material3.ListItemShapes
+import androidx.compose.material3.MaterialShapes
+import androidx.compose.material3.MenuDefaults
+import androidx.compose.material3.SegmentedListItem
+import androidx.compose.material3.TopAppBarDefaults
 import android.content.Intent
 import android.speech.RecognizerIntent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -192,17 +200,23 @@ fun HerdrSummary(node: String, onOpen: () -> Unit) {
         val agents = ready?.agents.orEmpty()
         val blocked = agents.count { it.status == AgentStatus.BLOCKED }
         val working = agents.count { it.status == AgentStatus.WORKING }
+        val c = MaterialTheme.colorScheme
         Surface(
             onClick = onOpen,
-            color = MaterialTheme.colorScheme.secondaryContainer,
-            shape = RoundedCornerShape(16.dp),
+            color = if (blocked > 0) c.tertiaryContainer else c.secondaryContainer,
+            shape = MaterialTheme.shapes.extraLargeIncreased,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.SmartToy, null)
-                Spacer(Modifier.width(14.dp))
+            Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+                ShapeBadge(
+                    if (blocked > 0) MaterialShapes.SoftBurst else MaterialShapes.Cookie9Sided,
+                    if (blocked > 0) c.tertiary else c.secondary,
+                    size = 48.dp,
+                    spin = working > 0,
+                ) { Icon(Icons.Outlined.SmartToy, null, tint = if (blocked > 0) c.onTertiary else c.onSecondary) }
+                Spacer(Modifier.width(16.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(stringResource(R.string.agents_title), style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.agents_title), style = MaterialTheme.typography.titleMediumEmphasized)
                     Text(
                         listOfNotNull(
                             stringResource(R.string.agents_count, agents.size),
@@ -212,7 +226,6 @@ fun HerdrSummary(node: String, onOpen: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                if (blocked > 0) AgentDot(AgentStatus.BLOCKED)
             }
         }
     }
@@ -238,7 +251,10 @@ fun AgentsScreen(node: String, onBack: () -> Unit, onAgent: (String) -> Unit, on
     if (creating && state is HerdrState.Ready) {
         NewAgentDialog(node, state.agents, onDismiss = { creating = false }, onStarted = { creating = false; onAgent(it) })
     }
+    val bar = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
+        modifier = Modifier.nestedScroll(bar.nestedScrollConnection),
+        containerColor = Surfaces.page,
         floatingActionButton = {
             AnimatedVisibility(state is HerdrState.Ready, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
                 MediumExtendedFloatingActionButton(
@@ -249,7 +265,9 @@ fun AgentsScreen(node: String, onBack: () -> Unit, onAgent: (String) -> Unit, on
             }
         },
         topBar = {
-            TopAppBar(
+            LargeFlexibleTopAppBar(
+                scrollBehavior = bar,
+                colors = Surfaces.bar(),
                 title = { Text(stringResource(R.string.agents_title)) },
                 subtitle = { Text("herdr · $node") },
                 navigationIcon = { IconButton(shapes = IconButtonDefaults.shapes(), onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
@@ -268,9 +286,9 @@ fun AgentsScreen(node: String, onBack: () -> Unit, onAgent: (String) -> Unit, on
                             val needsYou = state.agents.filter { it.status == AgentStatus.BLOCKED || it.status == AgentStatus.DONE && (node to it.paneId) in unread }
                                 .sortedBy { if (it.status == AgentStatus.BLOCKED) 0 else 1 }
                             if (needsYou.isNotEmpty()) {
-                                item(key = "needs") { SectionHeader(stringResource(R.string.agents_needs_you)) }
-                                items(needsYou, key = { "n:" + it.paneId }) {
-                                    AgentRow(it, (node to it.paneId) in unread, Modifier.animateItem()) { onAgent(it.paneId) }
+                                item(key = "needs") { GroupHeader(stringResource(R.string.agents_needs_you), Modifier.animateItem()) }
+                                segmentedItems(needsYou, key = { "n:" + it.paneId }) { a, shapes ->
+                                    AgentRow(a, (node to a.paneId) in unread, shapes, attention = true) { onAgent(a.paneId) }
                                 }
                             }
                             state.agents.filterNot { it in needsYou }.groupBy { it.workspace }.forEach { (ws, list) ->
@@ -278,7 +296,7 @@ fun AgentsScreen(node: String, onBack: () -> Unit, onAgent: (String) -> Unit, on
                                     val isMuted = top.bangwu.taildeck.Store.muteKey(node, ws) in muted
                                     WorkspaceHeader(ws, isMuted) { hub.setMuted(node, ws, !isMuted) }
                                 }
-                                items(list, key = { it.paneId }) { AgentRow(it, (node to it.paneId) in unread, Modifier.animateItem()) { onAgent(it.paneId) } }
+                                segmentedItems(list, key = { it.paneId }) { a, shapes -> AgentRow(a, (node to a.paneId) in unread, shapes) { onAgent(a.paneId) } }
                             }
                         }
                     }
@@ -299,44 +317,37 @@ private fun Centered(text: String) {
     }
 }
 
-@Composable
-private fun SectionHeader(text: String, modifier: Modifier = Modifier) {
-    Text(text, modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-}
-
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun WorkspaceHeader(name: String, muted: Boolean, onToggleMute: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     Box {
-        Row(
-            Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = { menu = true }).padding(end = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            SectionHeader(name, Modifier.weight(1f, fill = false))
+        GroupHeader(name, Modifier.combinedClickable(onClick = {}, onLongClick = { menu = true })) {
             if (muted) {
                 Spacer(Modifier.width(6.dp))
-                Icon(Icons.Outlined.NotificationsOff, stringResource(R.string.agents_unmute), Modifier.padding(top = 12.dp).size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Icon(Icons.Outlined.NotificationsOff, stringResource(R.string.agents_unmute), Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-        DropdownMenu(menu, onDismissRequest = { menu = false }) {
-            DropdownMenuItem(text = { Text(stringResource(if (muted) R.string.agents_unmute else R.string.agents_mute)) }, onClick = { menu = false; onToggleMute() })
+        GroupMenu(menu, onDismissRequest = { menu = false }) {
+            MenuItem(text = { Text(stringResource(if (muted) R.string.agents_unmute else R.string.agents_mute)) }, onClick = { menu = false; onToggleMute() })
         }
     }
 }
 
 @Composable
-private fun AgentRow(agent: HerdrAgent, unread: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    ListItem(
-        modifier = modifier.clickable(onClick = onClick),
-        leadingContent = { AgentDot(agent.status) },
-        headlineContent = {
+private fun AgentRow(agent: HerdrAgent, unread: Boolean, shapes: ListItemShapes, attention: Boolean = false, onClick: () -> Unit) {
+    SegmentedListItem(
+        onClick = onClick,
+        shapes = shapes,
+        colors = Surfaces.itemColors(if (attention && agent.status == AgentStatus.BLOCKED) MaterialTheme.colorScheme.tertiaryContainer else Surfaces.item),
+        leadingContent = { AgentAvatar(agent.kind, agent.status) },
+        content = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     agent.label,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    fontWeight = if (unread) androidx.compose.ui.text.font.FontWeight.SemiBold else null,
+                    style = if (unread) MaterialTheme.typography.bodyLargeEmphasized else MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.weight(1f, fill = false),
                 )
                 if (unread) {
@@ -616,13 +627,15 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { Text(agent?.label ?: pane, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                subtitle = {
+                title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        AgentDot(status, Modifier.size(7.dp))
-                        Spacer(Modifier.width(6.dp))
-                        AnimatedContent(statusLabel(status) + (agent?.title?.let { " · $it" } ?: ""), label = "status") {
-                            Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        AgentAvatar(kind, status, size = 36.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(agent?.label ?: pane, style = MaterialTheme.typography.titleMediumEmphasized, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            AnimatedContent(statusLabel(status) + (agent?.title?.let { " · $it" } ?: ""), label = "status") {
+                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                         }
                     }
                 },
@@ -630,31 +643,41 @@ fun AgentChatScreen(node: String, pane: String, onBack: () -> Unit, onTerminal: 
                 actions = {
                     IconButton(shapes = IconButtonDefaults.shapes(), onClick = onTerminal) { Icon(Icons.Outlined.Terminal, stringResource(R.string.ssh)) }
                     IconButton(shapes = IconButtonDefaults.shapes(), onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
-                    DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text(stringResource(R.string.agent_rename)) }, onClick = { menu = false; renaming = true })
-                        if (kind in setOf("claude", "codex", "pi", "omp")) {
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.agent_restart)) },
-                                onClick = { menu = false; restartAgent(null) },
+                    GroupMenu(
+                        menu,
+                        { menu = false },
+                        {
+                            MenuItem(text = { Text(stringResource(R.string.agent_rename)) }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { menu = false; renaming = true })
+                            if (kind in setOf("claude", "codex", "pi", "omp")) {
+                                MenuItem(
+                                    text = { Text(stringResource(R.string.agent_restart)) },
+                                    leadingIcon = { Icon(Icons.Outlined.RestartAlt, null) },
+                                    onClick = { menu = false; restartAgent(null) },
+                                )
+                                MenuItem(
+                                    text = { Text(stringResource(R.string.agent_restart_continue)) },
+                                    leadingIcon = { Icon(Icons.Outlined.PlayArrow, null) },
+                                    onClick = { menu = false; restartAgent(context.getString(R.string.agent_continue_prompt)) },
+                                )
+                            }
+                        },
+                        {
+                            val options = listOf(
+                                ChatDisplay.FULL to R.string.chat_display_full,
+                                ChatDisplay.TOOLS to R.string.chat_display_tools,
+                                ChatDisplay.TURNS to R.string.chat_display_turns,
                             )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.agent_restart_continue)) },
-                                onClick = { menu = false; restartAgent(context.getString(R.string.agent_continue_prompt)) },
-                            )
-                        }
-                        HorizontalDivider()
-                        listOf(
-                            ChatDisplay.FULL to R.string.chat_display_full,
-                            ChatDisplay.TOOLS to R.string.chat_display_tools,
-                            ChatDisplay.TURNS to R.string.chat_display_turns,
-                        ).forEach { (d, label) ->
-                            DropdownMenuItem(
-                                text = { Text(stringResource(label)) },
-                                leadingIcon = { if (d == display) Icon(Icons.Outlined.Check, null) else Spacer(Modifier.size(24.dp)) },
-                                onClick = { menu = false; app.store.setChatDisplay(d.key) },
-                            )
-                        }
-                    }
+                            options.forEachIndexed { i, (d, label) ->
+                                DropdownMenuItem(
+                                    checked = d == display,
+                                    onCheckedChange = { menu = false; app.store.setChatDisplay(d.key) },
+                                    text = { Text(stringResource(label)) },
+                                    shapes = MenuDefaults.itemShape(i, options.size),
+                                    checkedLeadingIcon = { Icon(Icons.Outlined.Check, null) },
+                                )
+                            }
+                        },
+                    )
                 },
             )
         },
@@ -1001,17 +1024,23 @@ private fun Composer(
     Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.Bottom) {
         Box(Modifier.padding(bottom = 4.dp)) {
             IconButton(shapes = IconButtonDefaults.shapes(), onClick = { attachMenu = true }) { Icon(Icons.Outlined.Add, stringResource(R.string.attach)) }
-            DropdownMenu(attachMenu, onDismissRequest = { attachMenu = false }) {
-                DropdownMenuItem(text = { Text(stringResource(R.string.attach_image)) }, leadingIcon = { Icon(Icons.Outlined.Image, null) }, onClick = { attachMenu = false; onPickImages() })
-                DropdownMenuItem(text = { Text(stringResource(R.string.attach_file)) }, leadingIcon = { Icon(Icons.Outlined.AttachFile, null) }, onClick = { attachMenu = false; onPickFiles() })
+            GroupMenu(attachMenu, onDismissRequest = { attachMenu = false }) {
+                MenuItem(text = { Text(stringResource(R.string.attach_image)) }, leadingIcon = { Icon(Icons.Outlined.Image, null) }, onClick = { attachMenu = false; onPickImages() })
+                MenuItem(text = { Text(stringResource(R.string.attach_file)) }, leadingIcon = { Icon(Icons.Outlined.AttachFile, null) }, onClick = { attachMenu = false; onPickFiles() })
             }
         }
-        OutlinedTextField(
+        androidx.compose.material3.TextField(
             draft,
             onDraft,
             modifier = Modifier.weight(1f).heightIn(max = 180.dp),
             placeholder = { Text(stringResource(if (queues) R.string.agent_queue_hint else R.string.agent_message_hint), maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            shape = RoundedCornerShape(22.dp),
+            shape = RoundedCornerShape(28.dp),
+            colors = androidx.compose.material3.TextFieldDefaults.colors(
+                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+            ),
             trailingIcon = when {
                 draft.isBlank() && canVoice -> { { IconButton(shapes = IconButtonDefaults.shapes(), onClick = onVoice) { Icon(Icons.Outlined.Mic, stringResource(R.string.agent_voice)) } } }
                 draft.lines().size >= 3 || draft.length > 120 -> { { IconButton(shapes = IconButtonDefaults.shapes(), onClick = onFullscreen) { Icon(Icons.Outlined.OpenInFull, stringResource(R.string.agent_fullscreen)) } } }
@@ -1020,9 +1049,13 @@ private fun Composer(
         )
         Spacer(Modifier.width(8.dp))
         val enabled = (draft.isNotBlank() || hasAttachments) && !sending
-        Box(
-            Modifier.padding(bottom = 4.dp).size(40.dp).clip(CircleShape)
-                .background(if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+        val c = MaterialTheme.colorScheme
+        // The send button is the chat's hero: a circle at rest, a cookie when there's
+        // something to send, spinning while it goes out.
+        ShapeBadge(
+            if (enabled || sending) MaterialShapes.Cookie9Sided else MaterialShapes.Circle,
+            if (enabled || sending) c.primary else c.surfaceContainerHighest,
+            Modifier.padding(bottom = 2.dp).clip(CircleShape)
                 .combinedClickable(
                     enabled = enabled,
                     role = androidx.compose.ui.semantics.Role.Button,
@@ -1036,11 +1069,11 @@ private fun Composer(
                         }
                     } else null,
                 ),
-            contentAlignment = Alignment.Center,
+            size = 48.dp,
+            spin = sending,
         ) {
-            val tint = if (enabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+            val tint = if (enabled || sending) c.onPrimary else c.onSurface.copy(alpha = 0.38f)
             when {
-                sending -> LoadingIndicator(Modifier.size(22.dp), color = tint)
                 queues -> Icon(Icons.Outlined.Schedule, null, tint = tint)
                 else -> Icon(Icons.AutoMirrored.Filled.Send, null, tint = tint)
             }

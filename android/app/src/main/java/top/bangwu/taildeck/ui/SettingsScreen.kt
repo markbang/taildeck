@@ -1,5 +1,10 @@
 package top.bangwu.taildeck.ui
 
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material3.LargeFlexibleTopAppBar
+import androidx.compose.material3.SegmentedListItem
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.animation.animateContentSize
 import android.widget.Toast
 import androidx.compose.foundation.clickable
@@ -73,98 +78,135 @@ fun SettingsScreen(onBack: () -> Unit, onLogs: () -> Unit, onLoggedOut: () -> Un
     var deleting by remember { mutableStateOf<SshIdentity?>(null) }
     LaunchedEffect(Unit) { runCatching { app.keys.ensureBuiltin() } }
 
+    val bar = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
+        modifier = Modifier.nestedScroll(bar.nestedScrollConnection),
+        containerColor = Surfaces.page,
         topBar = {
-            TopAppBar(
+            LargeFlexibleTopAppBar(
+                scrollBehavior = bar,
+                colors = Surfaces.bar(),
                 title = { Text(stringResource(R.string.settings)) },
                 navigationIcon = { IconButton(shapes = IconButtonDefaults.shapes(), onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back)) } },
             )
         },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).animateContentSize(Motion.slow())) {
-            SectionLabel(stringResource(R.string.account))
-            ListItem(
-                headlineContent = { Text(status?.self?.user ?: "—") },
-                supportingContent = { Text(listOfNotNull(status?.tailnet, app.store.controlUrl.ifBlank { null }).joinToString(" · ")) },
-                overlineContent = { Text(stringResource(R.string.tailnet)) },
-            )
-            status?.self?.let { self ->
-                ListItem(
-                    overlineContent = { Text(stringResource(R.string.this_device)) },
-                    headlineContent = { Text(self.dnsName.ifEmpty { self.name }) },
-                    supportingContent = {
-                        Text(
-                            self.ips.joinToString("  ") + "\n" + stringResource(R.string.notif_text, app.tailscale.gatewayPort),
-                            fontFamily = FontFamily.Monospace,
-                        )
+            val itemColors = Surfaces.itemColors()
+            GroupHeader(stringResource(R.string.account))
+            SegmentedGroup(
+                listOfNotNull<Segment>(
+                    { s ->
+                        SegmentedListItem(
+                            onClick = {},
+                            shapes = s,
+                            colors = itemColors,
+                            overlineContent = { Text(stringResource(R.string.tailnet)) },
+                            supportingContent = { Text(listOfNotNull(status?.tailnet, app.store.controlUrl.ifBlank { null }).joinToString(" · ")) },
+                        ) { Text(status?.self?.user ?: "—") }
                     },
-                    modifier = Modifier.clickable { self.ipv4?.let(context::copy) },
-                )
-            }
-            HorizontalDivider()
-
-            SectionLabel(stringResource(R.string.ssh_keys))
-            identities.forEach { id ->
-                var menu by remember { mutableStateOf(false) }
-                ListItem(
-                    leadingContent = { Icon(if (id.hasCert) Icons.Outlined.VerifiedUser else Icons.Outlined.Key, null) },
-                    headlineContent = { Text(if (id.builtin) stringResource(R.string.key_builtin) else id.name) },
-                    supportingContent = { Text(identitySubtitle(id), maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                    trailingContent = {
-                        IconButton(shapes = IconButtonDefaults.shapes(), onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
-                        DropdownMenu(menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.copy_public_key)) },
-                                onClick = { menu = false; context.copy(id.publicKey) },
-                            )
-                            if (!id.builtin) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.delete)) },
-                                    onClick = { menu = false; deleting = id },
-                                )
-                            }
+                    status?.self?.let { self ->
+                        { s ->
+                            SegmentedListItem(
+                                onClick = { self.ipv4?.let(context::copy) },
+                                shapes = s,
+                                colors = itemColors,
+                                overlineContent = { Text(stringResource(R.string.this_device)) },
+                                supportingContent = {
+                                    Text(
+                                        self.ips.joinToString("  ") + "\n" + stringResource(R.string.notif_text, app.tailscale.gatewayPort),
+                                        fontFamily = FontFamily.Monospace,
+                                    )
+                                },
+                            ) { Text(self.dnsName.ifEmpty { self.name }) }
                         }
                     },
-                    modifier = Modifier.clickable { context.copy(id.publicKey) },
-                )
-            }
-            ListItem(
-                leadingContent = { Icon(Icons.Outlined.Add, null) },
-                headlineContent = { Text(stringResource(R.string.import_key)) },
-                modifier = Modifier.clickable { importing = true },
+                ),
             )
-            ListItem(
-                leadingContent = { Icon(Icons.Outlined.VpnKeyOff, null) },
-                headlineContent = { Text(stringResource(R.string.forget_host_keys)) },
-                modifier = Modifier.clickable {
-                    app.tailscale.forgetHostKeys()
-                    Toast.makeText(context, R.string.host_keys_cleared, Toast.LENGTH_SHORT).show()
-                },
+
+            GroupHeader(stringResource(R.string.ssh_keys))
+            SegmentedGroup(
+                identities.map<SshIdentity, Segment> { id ->
+                    { s ->
+                        var menu by remember { mutableStateOf(false) }
+                        SegmentedListItem(
+                            onClick = { context.copy(id.publicKey) },
+                            shapes = s,
+                            colors = itemColors,
+                            leadingContent = { Icon(if (id.hasCert) Icons.Outlined.VerifiedUser else Icons.Outlined.Key, null) },
+                            supportingContent = { Text(identitySubtitle(id), maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                            trailingContent = {
+                                IconButton(shapes = IconButtonDefaults.shapes(), onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
+                                GroupMenu(menu, onDismissRequest = { menu = false }) {
+                                    MenuItem(
+                                        text = { Text(stringResource(R.string.copy_public_key)) },
+                                        leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) },
+                                        onClick = { menu = false; context.copy(id.publicKey) },
+                                    )
+                                    if (!id.builtin) {
+                                        MenuItem(
+                                            text = { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) },
+                                            leadingIcon = { Icon(Icons.Outlined.Delete, null, tint = MaterialTheme.colorScheme.error) },
+                                            onClick = { menu = false; deleting = id },
+                                        )
+                                    }
+                                }
+                            },
+                        ) { Text(if (id.builtin) stringResource(R.string.key_builtin) else id.name) }
+                    }
+                } + listOf<Segment>(
+                    { s ->
+                        SegmentedListItem(onClick = { importing = true }, shapes = s, colors = itemColors, leadingContent = { Icon(Icons.Outlined.Add, null) }) {
+                            Text(stringResource(R.string.import_key))
+                        }
+                    },
+                    { s ->
+                        SegmentedListItem(
+                            onClick = {
+                                app.tailscale.forgetHostKeys()
+                                Toast.makeText(context, R.string.host_keys_cleared, Toast.LENGTH_SHORT).show()
+                            },
+                            shapes = s,
+                            colors = itemColors,
+                            leadingContent = { Icon(Icons.Outlined.VpnKeyOff, null) },
+                        ) { Text(stringResource(R.string.forget_host_keys)) }
+                    },
+                ),
             )
-            HorizontalDivider()
 
             var openInApp by remember { mutableStateOf(app.store.openInApp) }
-            ListItem(
-                leadingContent = { Icon(Icons.Outlined.Language, null) },
-                headlineContent = { Text(stringResource(R.string.open_services_in_app)) },
-                supportingContent = { Text(stringResource(if (openInApp) R.string.open_in_app_desc else R.string.open_in_browser_desc)) },
-                trailingContent = { Switch(openInApp, { openInApp = it; app.store.openInApp = it }) },
-                modifier = Modifier.clickable { openInApp = !openInApp; app.store.openInApp = openInApp },
-            )
-            HorizontalDivider()
-            ListItem(
-                leadingContent = { Icon(Icons.Outlined.Description, null) },
-                headlineContent = { Text(stringResource(R.string.logs)) },
-                modifier = Modifier.clickable(onClick = onLogs),
-            )
-            ListItem(
-                leadingContent = { Icon(Icons.AutoMirrored.Outlined.Logout, null, tint = MaterialTheme.colorScheme.error) },
-                headlineContent = { Text(stringResource(R.string.logout), color = MaterialTheme.colorScheme.error) },
-                modifier = Modifier.clickable { confirmLogout = true },
+            GroupHeader(stringResource(R.string.general))
+            SegmentedGroup(
+                listOf<Segment>(
+                    { s ->
+                        SegmentedListItem(
+                            checked = openInApp,
+                            onCheckedChange = { openInApp = it; app.store.openInApp = it },
+                            shapes = s,
+                            colors = itemColors,
+                            leadingContent = { Icon(Icons.Outlined.Language, null) },
+                            supportingContent = { Text(stringResource(if (openInApp) R.string.open_in_app_desc else R.string.open_in_browser_desc)) },
+                            trailingContent = { Switch(openInApp, null) },
+                        ) { Text(stringResource(R.string.open_services_in_app)) }
+                    },
+                    { s ->
+                        SegmentedListItem(onClick = onLogs, shapes = s, colors = itemColors, leadingContent = { Icon(Icons.Outlined.Description, null) }) {
+                            Text(stringResource(R.string.logs))
+                        }
+                    },
+                    { s ->
+                        SegmentedListItem(
+                            onClick = { confirmLogout = true },
+                            shapes = s,
+                            colors = itemColors,
+                            leadingContent = { Icon(Icons.AutoMirrored.Outlined.Logout, null, tint = MaterialTheme.colorScheme.error) },
+                        ) { Text(stringResource(R.string.logout), color = MaterialTheme.colorScheme.error) }
+                    },
+                ),
             )
             Text(
                 stringResource(R.string.version, BuildConfig.VERSION_NAME),
-                Modifier.padding(16.dp),
+                Modifier.padding(horizontal = 32.dp, vertical = 20.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -202,16 +244,6 @@ fun SettingsScreen(onBack: () -> Unit, onLogs: () -> Unit, onLoggedOut: () -> Un
             dismissButton = { TextButton(shapes = ButtonDefaults.shapes(), onClick = { confirmLogout = false }) { Text(stringResource(R.string.cancel)) } },
         )
     }
-}
-
-@Composable
-private fun SectionLabel(text: String) {
-    Text(
-        text,
-        Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp),
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
