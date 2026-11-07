@@ -22,8 +22,8 @@ android {
         applicationId = "top.bangwu.taildeck"
         minSdk = 26
         targetSdk = 36
-        versionCode = 22
-        versionName = "0.7.0"
+        versionCode = 23
+        versionName = "0.7.1"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }

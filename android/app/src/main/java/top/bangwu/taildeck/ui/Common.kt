@@ -47,8 +47,10 @@ fun Context.copy(text: String) {
 fun relativeTime(iso: String?): String? {
     if (iso == null) return null
     return runCatching {
-        val t = OffsetDateTime.parse(iso).toInstant().toEpochMilli()
-        DateUtils.getRelativeTimeSpanString(t, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
+        val now = System.currentTimeMillis()
+        // Clock skew between nodes can put lastSeen slightly ahead; never say "in 1 hour".
+        val t = OffsetDateTime.parse(iso).toInstant().toEpochMilli().coerceAtMost(now)
+        DateUtils.getRelativeTimeSpanString(t, now, DateUtils.MINUTE_IN_MILLIS).toString()
     }.getOrNull()
 }
 

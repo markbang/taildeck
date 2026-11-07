@@ -57,6 +57,8 @@ import androidx.compose.ui.graphics.Matrix
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.graphics.shapes.Morph
@@ -72,8 +74,11 @@ object Surfaces {
     @Composable
     fun bar(): TopAppBarColors = TopAppBarDefaults.topAppBarColors(containerColor = page, scrolledContainerColor = page)
 
+    /** [muted] dims a row whose subject is unavailable, like an offline node, without hiding it. */
     @Composable
-    fun itemColors(container: Color = item): ListItemColors = ListItemDefaults.segmentedColors(containerColor = container)
+    fun itemColors(container: Color = item, muted: Boolean = false): ListItemColors =
+        if (!muted) ListItemDefaults.segmentedColors(containerColor = container)
+        else MaterialTheme.colorScheme.onSurfaceVariant.let { ListItemDefaults.segmentedColors(containerColor = container, contentColor = it, supportingContentColor = it.copy(alpha = 0.8f)) }
 }
 
 /**
@@ -171,9 +176,14 @@ fun AgentAvatar(kind: String, status: AgentStatus, size: Dp = 40.dp) {
 
 /** A rounded group label, set in from the group's edge. */
 @Composable
-fun GroupHeader(text: String, modifier: Modifier = Modifier, trailing: @Composable RowScope.() -> Unit = {}) {
+fun GroupHeader(text: String, modifier: Modifier = Modifier, muted: Boolean = false, trailing: @Composable RowScope.() -> Unit = {}) {
     Row(modifier.fillMaxWidth().padding(start = 32.dp, end = 20.dp, top = 20.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(text, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.titleSmallEmphasized, color = MaterialTheme.colorScheme.primary)
+        Text(
+            text,
+            Modifier.weight(1f, fill = false).semantics { heading() },
+            style = MaterialTheme.typography.titleSmallEmphasized,
+            color = if (muted) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+        )
         trailing()
     }
 }

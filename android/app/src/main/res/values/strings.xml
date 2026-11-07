@@ -19,12 +19,12 @@
     <string name="tab_nodes">Nodes</string>
     <string name="tab_services">Services</string>
     <string name="settings">Settings</string>
-    <string name="search_nodes">Search nodes</string>
+    <string name="search_nodes">Search</string>
     <string name="this_device">This device</string>
     <string name="online">Online</string>
     <string name="offline">Offline</string>
     <string name="last_seen">Last seen %1$s</string>
-    <string name="no_nodes">No other nodes are visible to this device.</string>
+    <string name="no_nodes">No other nodes</string>
     <string name="n_online">%1$d of %2$d online</string>
     <string name="copied">Copied</string>
 
@@ -51,7 +51,7 @@
 
     <string name="services">Services</string>
     <string name="no_services">No services yet. Add one or scan common ports.</string>
-    <string name="no_services_all">Services you add on a node show up here.</string>
+    <string name="no_services_all">No services yet</string>
     <string name="add_service">Add service</string>
     <string name="edit_service">Edit service</string>
     <string name="scan_ports">Scan ports</string>
@@ -318,4 +318,9 @@
         <item quantity="one">used %d other tool</item>
         <item quantity="other">used %d other tools</item>
     </plurals>
+    <string name="link_direct">Direct</string>
+    <string name="link_relayed">Relayed via %1$s</string>
+    <string name="links_more">+%1$d more</string>
+    <string name="copy_ip">Copy IP</string>
+    <string name="more_options_for">More options for %1$s</string>
 </resources>

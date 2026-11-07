@@ -17,12 +17,12 @@
     <string name="tab_nodes">节点</string>
     <string name="tab_services">服务</string>
     <string name="settings">设置</string>
-    <string name="search_nodes">搜索节点</string>
+    <string name="search_nodes">搜索</string>
     <string name="this_device">本机</string>
     <string name="online">在线</string>
     <string name="offline">离线</string>
     <string name="last_seen">最后在线 %1$s</string>
-    <string name="no_nodes">当前设备看不到其他节点。</string>
+    <string name="no_nodes">没有其他节点</string>
     <string name="n_online">%1$d / %2$d 在线</string>
     <string name="copied">已复制</string>
 
@@ -49,7 +49,7 @@
 
     <string name="services">服务</string>
     <string name="no_services">还没有服务。手动添加，或扫描常用端口。</string>
-    <string name="no_services_all">在节点里添加的服务会显示在这里。</string>
+    <string name="no_services_all">还没有服务</string>
     <string name="add_service">添加服务</string>
     <string name="edit_service">编辑服务</string>
     <string name="scan_ports">扫描端口</string>
@@ -309,4 +309,9 @@
     <plurals name="tools_other">
         <item quantity="other">调用 %d 个其他工具</item>
     </plurals>
+    <string name="link_direct">直连</string>
+    <string name="link_relayed">经 %1$s 中继</string>
+    <string name="links_more">另 %1$d 个</string>
+    <string name="copy_ip">复制 IP</string>
+    <string name="more_options_for">%1$s 的更多选项</string>
 </resources>

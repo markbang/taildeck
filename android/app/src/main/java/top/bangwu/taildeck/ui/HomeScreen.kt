@@ -1,13 +1,15 @@
 package top.bangwu.taildeck.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.outlined.PhoneAndroid
-import androidx.compose.material3.Badge
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.ListItemShapes
-import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.SegmentedListItem
-import androidx.compose.material3.Surface
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBarDefaults
@@ -25,7 +27,6 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -37,7 +38,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Dns
@@ -49,24 +49,19 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Widgets
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LoadingIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearWavyProgressIndicator
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ShortNavigationBar
 import androidx.compose.material3.ShortNavigationBarItem
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -80,6 +75,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
+import top.bangwu.taildeck.EngineState
 import top.bangwu.taildeck.Node
 import top.bangwu.taildeck.Phase
 import top.bangwu.taildeck.R
@@ -92,64 +88,80 @@ fun HomeScreen(onNode: (String) -> Unit, onOpenInApp: (Service) -> Unit, onSetti
     val app = TaildeckApp.instance
     val state by app.tailscale.state.collectAsStateWithLifecycle()
     val services by app.store.services.collectAsStateWithLifecycle()
-    var tab by rememberSaveable { mutableStateOf(0) }
-    val status = state.status
     val notifPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
+    HomeContent(state, services, app.tailscale::refreshNow, onNode, onOpenInApp, onSettings)
+}
 
+/** Home without app singletons, so it can be rendered from plain data. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HomeContent(
+    state: EngineState,
+    services: List<Service>,
+    onRefresh: () -> Unit,
+    onNode: (String) -> Unit,
+    onOpenInApp: (Service) -> Unit,
+    onSettings: () -> Unit,
+    initialTab: Int = 0,
+) {
+    var tab by rememberSaveable { mutableIntStateOf(initialTab) }
+    val status = state.status
     val bar = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
-    Scaffold(
-        modifier = Modifier.nestedScroll(bar.nestedScrollConnection),
-        containerColor = Surfaces.page,
-        topBar = {
-            Column {
-                LargeFlexibleTopAppBar(
-                    scrollBehavior = bar,
-                    colors = Surfaces.bar(),
-                    title = { Text(status?.tailnet ?: stringResource(R.string.app_name), maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    subtitle = {
-                        if (status != null) Text(stringResource(R.string.n_online, status.peers.count { it.online }, status.peers.size))
-                    },
-                    actions = {
-                        IconButton(shapes = IconButtonDefaults.shapes(), onClick = onSettings) { Icon(Icons.Outlined.Settings, stringResource(R.string.settings)) }
-                    },
-                )
-                AnimatedVisibility(state.phase != Phase.RUNNING, enter = fadeIn(), exit = fadeOut()) {
-                    LinearWavyProgressIndicator(Modifier.fillMaxWidth())
+    // On wide screens the whole screen keeps a phone-to-tablet column instead of stretching rows.
+    Box(Modifier.fillMaxSize().background(Surfaces.page), contentAlignment = Alignment.TopCenter) {
+        Scaffold(
+            modifier = Modifier.widthIn(max = 720.dp).nestedScroll(bar.nestedScrollConnection),
+            containerColor = Surfaces.page,
+            topBar = {
+                Column {
+                    LargeFlexibleTopAppBar(
+                        scrollBehavior = bar,
+                        colors = Surfaces.bar(),
+                        title = { Text(status?.tailnet ?: stringResource(R.string.app_name), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        actions = {
+                            IconButton(shapes = IconButtonDefaults.shapes(), onClick = onSettings) { Icon(Icons.Outlined.Settings, stringResource(R.string.settings)) }
+                        },
+                    )
+                    AnimatedVisibility(state.phase != Phase.RUNNING, enter = fadeIn(), exit = fadeOut()) {
+                        LinearWavyProgressIndicator(Modifier.fillMaxWidth())
+                    }
                 }
-            }
-        },
-        bottomBar = {
-            ShortNavigationBar(containerColor = Surfaces.page) {
-                ShortNavigationBarItem(
-                    selected = tab == 0,
-                    onClick = { tab = 0 },
-                    icon = { Icon(Icons.Outlined.Dns, null) },
-                    label = { Text(stringResource(R.string.tab_nodes)) },
-                )
-                ShortNavigationBarItem(
-                    selected = tab == 1,
-                    onClick = { tab = 1 },
-                    icon = { Icon(Icons.Outlined.Widgets, null) },
-                    label = { Text(stringResource(R.string.tab_services)) },
-                )
-            }
-        },
-    ) { padding ->
-        AnimatedContent(
-            targetState = tab,
-            transitionSpec = {
-                val dir = if (targetState > initialState) 1 else -1
-                (slideInHorizontally(Motion.slow()) { dir * it / 8 } + fadeIn(Motion.fade()))
-                    .togetherWith(slideOutHorizontally(Motion.fast()) { -dir * it / 8 } + fadeOut(Motion.fadeFast()))
             },
-            label = "tab",
-        ) { current ->
-            when (current) {
-                0 -> NodesTab(padding, status?.self, status?.peers.orEmpty(), state.phase == Phase.RUNNING, services, onNode)
-                else -> ServicesTab(padding, services, status?.peers.orEmpty(), onOpenInApp)
+            bottomBar = {
+                ShortNavigationBar(containerColor = Surfaces.page) {
+                    ShortNavigationBarItem(
+                        selected = tab == 0,
+                        onClick = { tab = 0 },
+                        icon = { Icon(Icons.Outlined.Dns, null) },
+                        label = { Text(stringResource(R.string.tab_nodes)) },
+                        modifier = Modifier.testTag("tab-nodes"),
+                    )
+                    ShortNavigationBarItem(
+                        selected = tab == 1,
+                        onClick = { tab = 1 },
+                        icon = { Icon(Icons.Outlined.Widgets, null) },
+                        label = { Text(stringResource(R.string.tab_services)) },
+                        modifier = Modifier.testTag("tab-services"),
+                    )
+                }
+            },
+        ) { padding ->
+            AnimatedContent(
+                targetState = tab,
+                transitionSpec = {
+                    val dir = if (targetState > initialState) 1 else -1
+                    (slideInHorizontally(Motion.slow()) { dir * it / 8 } + fadeIn(Motion.fade()))
+                        .togetherWith(slideOutHorizontally(Motion.fast()) { -dir * it / 8 } + fadeOut(Motion.fadeFast()))
+                },
+                label = "tab",
+            ) { current ->
+                when (current) {
+                    0 -> NodesTab(padding, status?.self, status?.peers.orEmpty(), state.phase == Phase.RUNNING, onRefresh, onNode)
+                    else -> ServicesTab(padding, services, status?.peers.orEmpty(), onOpenInApp)
+                }
             }
         }
     }
@@ -162,16 +174,15 @@ private fun NodesTab(
     self: Node?,
     peers: List<Node>,
     running: Boolean,
-    services: List<Service>,
+    onRefresh: () -> Unit,
     onNode: (String) -> Unit,
 ) {
-    val app = TaildeckApp.instance
     val context = LocalContext.current
     var query by rememberSaveable { mutableStateOf("") }
     var refreshing by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(refreshing) {
         if (refreshing) {
-            app.tailscale.refreshNow()
+            onRefresh()
             delay(600)
             refreshing = false
         }
@@ -180,6 +191,7 @@ private fun NodesTab(
         query.isBlank() || it.name.contains(query, true) || it.ips.any { ip -> ip.startsWith(query) } ||
             it.tags.any { t -> t.contains(query, true) } || it.os.contains(query, true)
     }
+    val (online, offline) = filtered.partition { it.online }
 
     RefreshBox(refreshing, onRefresh = { refreshing = true }, modifier = Modifier.padding(padding).fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
@@ -197,15 +209,15 @@ private fun NodesTab(
                         focusedIndicatorColor = Color.Transparent,
                         unfocusedIndicatorColor = Color.Transparent,
                     ),
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag("node-search"),
                 )
             }
             if (self != null && query.isBlank()) {
-                item { SelfCard(self, running) { self.ipv4?.let(context::copy) } }
+                item(key = "links") { LinkMap(self, peers, running, onCopyIp = { self.ipv4?.let(context::copy) }, onPeer = onNode) }
             }
             if (!running && peers.isEmpty()) {
                 item {
-                    Row(Modifier.fillMaxWidth().padding(32.dp), horizontalArrangement = Arrangement.Center) {
+                    Row(Modifier.fillMaxWidth().padding(32.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                         LoadingIndicator(Modifier.size(32.dp))
                         Spacer(Modifier.width(12.dp))
                         Text(stringResource(R.string.starting))
@@ -213,69 +225,33 @@ private fun NodesTab(
                 }
             } else if (peers.isEmpty()) {
                 item {
-                    Text(
-                        stringResource(R.string.no_nodes),
-                        modifier = Modifier.padding(24.dp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Text(stringResource(R.string.no_nodes), Modifier.padding(horizontal = 32.dp, vertical = 24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            if (filtered.isNotEmpty()) item(key = "nodes") { GroupHeader(stringResource(R.string.tab_nodes)) }
-            segmentedItems(filtered, key = { it.id }) { node, shapes ->
-                NodeRow(node, services.count { it.node == node.name }, shapes) { onNode(node.name) }
-            }
-        }
-    }
-}
-
-/** This device, the one hero card on the home screen. */
-@Composable
-private fun SelfCard(self: Node, running: Boolean, onClick: () -> Unit) {
-    val c = MaterialTheme.colorScheme
-    Surface(
-        onClick = onClick,
-        color = c.primaryContainer,
-        shape = MaterialTheme.shapes.extraLargeIncreased,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-            ShapeBadge(MaterialShapes.Cookie12Sided, c.primary, size = 56.dp, spin = !running) {
-                Icon(Icons.Outlined.PhoneAndroid, null, Modifier.size(28.dp), tint = c.onPrimary)
-            }
-            Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f)) {
-                Text(stringResource(R.string.this_device), style = MaterialTheme.typography.labelLarge, color = c.onPrimaryContainer.copy(alpha = 0.75f))
-                Text(self.name, style = MaterialTheme.typography.titleLargeEmphasized, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(self.ips.joinToString("  "), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, maxLines = 2)
-            }
+            // Online and offline read as two groups by space alone.
+            item(key = "gap-online") { Spacer(Modifier.height(8.dp)) }
+            segmentedItems(online, key = { it.id }) { node, shapes -> NodeRow(node, shapes) { onNode(node.name) } }
+            if (online.isNotEmpty() && offline.isNotEmpty()) item(key = "gap-offline") { Spacer(Modifier.height(16.dp)) }
+            segmentedItems(offline, key = { it.id }) { node, shapes -> NodeRow(node, shapes) { onNode(node.name) } }
         }
     }
 }
 
 @Composable
-private fun NodeRow(node: Node, serviceCount: Int, shapes: ListItemShapes, onClick: () -> Unit) {
+private fun NodeRow(node: Node, shapes: ListItemShapes, onClick: () -> Unit) {
+    val state = linkLabel(node)
     SegmentedListItem(
         onClick = onClick,
         shapes = shapes,
-        colors = Surfaces.itemColors(),
+        colors = Surfaces.itemColors(muted = !node.online),
+        modifier = Modifier.testTag("node:${node.name}").semantics { stateDescription = state },
         content = { Text(node.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
-            val parts = buildList {
-                add(osLabel(node.os))
-                node.ipv4?.let(::add)
-                if (!node.online) relativeTime(node.lastSeen)?.let { add(stringResource(R.string.last_seen, it)) }
-                if (node.tags.isNotEmpty()) add(node.tags.joinToString(" ") { it.removePrefix("tag:") })
-            }
-            Text(parts.joinToString(" · "), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val seen = if (node.online) null else relativeTime(node.lastSeen)
+            Text(listOfNotNull(node.ipv4, seen).joinToString(" · "), fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
         },
         leadingContent = { NodeAvatar(node) },
-        trailingContent = {
-            if (serviceCount > 0) {
-                Badge(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer) {
-                    Text("$serviceCount", style = MaterialTheme.typography.labelMediumEmphasized)
-                }
-            }
-        },
+        trailingContent = { LinkMark(node.link) },
     )
 }
 
@@ -288,13 +264,14 @@ private fun ServicesTab(padding: PaddingValues, services: List<Service>, peers: 
         }
         return
     }
-    val online = peers.associate { it.name to it.online }
+    val byName = peers.associateBy { it.name }
     LazyColumn(Modifier.padding(padding).fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
-        services.groupBy { it.node }.toSortedMap().forEach { (node, list) ->
-            item(key = "h:$node") {
-                GroupHeader(node, Modifier.animateItem()) {
-                    Spacer(Modifier.width(8.dp))
-                    StatusDot(online[node] == true)
+        services.groupBy { it.node }.toSortedMap().forEach { (nodeName, list) ->
+            val node = byName[nodeName]
+            item(key = "h:$nodeName") {
+                GroupHeader(nodeName, Modifier.animateItem(), muted = node?.online != true) {
+                    Spacer(Modifier.width(12.dp))
+                    LinkMark(node?.link ?: Link.OFFLINE)
                 }
             }
             segmentedItems(list, key = { it.id }) { svc, shapes ->
@@ -302,11 +279,15 @@ private fun ServicesTab(padding: PaddingValues, services: List<Service>, peers: 
                 SegmentedListItem(
                     onClick = { context.openService(svc.url, svc.name) { _, _ -> onOpenInApp(svc) } },
                     shapes = shapes,
-                    colors = Surfaces.itemColors(),
-                    content = { Text(svc.name) },
-                    supportingContent = { Text(svc.url, fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    colors = Surfaces.itemColors(muted = node?.online != true),
+                    modifier = Modifier.testTag("service:${svc.id}"),
+                    leadingContent = { ServiceIcon(svc) },
+                    content = { Text(svc.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    supportingContent = { Text(serviceAddress(svc.url), fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     trailingContent = {
-                        IconButton(shapes = IconButtonDefaults.shapes(), onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, null) }
+                        IconButton(shapes = IconButtonDefaults.shapes(), onClick = { menu = true }) {
+                            Icon(Icons.Outlined.MoreVert, stringResource(R.string.more_options_for, svc.name))
+                        }
                         GroupMenu(menu, onDismissRequest = { menu = false }) {
                             MenuItem(
                                 text = { Text(stringResource(R.string.open_in_app)) },
@@ -330,3 +311,11 @@ private fun ServicesTab(padding: PaddingValues, services: List<Service>, peers: 
         }
     }
 }
+
+/** `nas:5001`, plus the path when it isn't the root; the scheme and node are already implied. */
+private fun serviceAddress(url: String): String = runCatching {
+    val u = java.net.URI(url)
+    val port = if (u.port > 0) ":${u.port}" else ""
+    val path = (u.rawPath ?: "").takeIf { it.length > 1 }.orEmpty()
+    "${u.host}$port$path"
+}.getOrDefault(url)
