@@ -1,7 +1,6 @@
 package top.bangwu.taildeck.ui
 
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
@@ -139,7 +138,7 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
                     Button(
                         shapes = ButtonDefaults.shapes(ButtonGroupDefaults.connectedLeadingButtonShapes().shape, ButtonGroupDefaults.connectedLeadingButtonShapes().pressedShape),
                         onClick = { onSsh(name) },
-                        modifier = Modifier.weight(1.2f).heightIn(min = ButtonDefaults.MediumContainerHeight),
+                        modifier = Modifier.weight(1.2f),
                     ) {
                         Icon(Icons.Outlined.Terminal, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
@@ -148,7 +147,7 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
                     FilledTonalButton(
                         shapes = ButtonDefaults.shapes(ButtonGroupDefaults.connectedMiddleButtonShapes().shape, ButtonGroupDefaults.connectedMiddleButtonShapes().pressedShape),
                         onClick = { context.openService("http://$name/", name, onOpenInApp) },
-                        modifier = Modifier.weight(1f).heightIn(min = ButtonDefaults.MediumContainerHeight),
+                        modifier = Modifier.weight(1f),
                     ) {
                         Icon(Icons.Outlined.Language, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
@@ -173,7 +172,7 @@ fun NodeScreen(name: String, onBack: () -> Unit, onOpenInApp: (String, String) -
                             }
                         },
                         enabled = node != null && !pinging,
-                        modifier = Modifier.weight(1f).heightIn(min = ButtonDefaults.MediumContainerHeight),
+                        modifier = Modifier.weight(1f),
                     ) {
                         if (pinging) LoadingIndicator(Modifier.size(20.dp))
                         else Icon(Icons.Outlined.NetworkPing, null, Modifier.size(18.dp))

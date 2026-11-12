@@ -79,7 +79,7 @@ import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MediumExtendedFloatingActionButton
+import androidx.compose.material3.SmallExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -257,7 +257,7 @@ fun AgentsScreen(node: String, onBack: () -> Unit, onAgent: (String) -> Unit, on
         containerColor = Surfaces.page,
         floatingActionButton = {
             AnimatedVisibility(state is HerdrState.Ready, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
-                MediumExtendedFloatingActionButton(
+                SmallExtendedFloatingActionButton(
                     onClick = { creating = true },
                     icon = { Icon(Icons.Outlined.Add, null) },
                     text = { Text(stringResource(R.string.agent_new)) },
@@ -359,10 +359,13 @@ private fun AgentRow(agent: HerdrAgent, unread: Boolean, shapes: ListItemShapes,
             }
         },
         supportingContent = {
+            val dir = agent.cwd?.substringAfterLast('/')?.ifEmpty { "/" }
+            // Titles like pi's "π - documentation" only repeat the directory shown below.
+            val title = agent.title?.takeUnless { dir != null && it.contains(dir) && it.replace(dir, "").count(Char::isLetterOrDigit) <= 1 }
             Column {
-                agent.title?.let { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                title?.let { Text(it, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                 Text(
-                    listOfNotNull(agent.kind.takeIf { it != agent.label }, agent.cwd?.substringAfterLast('/')?.ifEmpty { "/" }, agent.paneId).joinToString(" · "),
+                    listOfNotNull(agent.kind.takeIf { it != agent.label }, dir, agent.paneId).joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontFamily = FontFamily.Monospace,
