@@ -76,6 +76,8 @@ android {
 
     packaging {
         jniLibs.useLegacyPackaging = false
+        // Dependencies ship 32-bit libs; without ours those devices would install and crash.
+        jniLibs.excludes += listOf("lib/armeabi-v7a/**", "lib/x86/**")
     }
 }
 
