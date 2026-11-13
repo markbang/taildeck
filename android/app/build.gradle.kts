@@ -22,10 +22,18 @@ android {
         applicationId = "top.bangwu.taildeck"
         minSdk = 26
         targetSdk = 36
-        versionCode = 24
-        versionName = "0.7.2"
-        ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+        versionCode = 25
+        versionName = "0.1.0"
+        // libghostty-vt and tsbridge are only built for these two ABIs.
+        externalNativeBuild.cmake.abiFilters += listOf("arm64-v8a", "x86_64")
+    }
+
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "x86_64")
+            isUniversalApk = true
         }
     }
 
@@ -101,13 +109,16 @@ dependencies {
 
 // Installs signed by the old key upgrade in place: re-sign with the old key
 // for v1/v2 plus the new key and rotation proof for v3 (Android 9+).
-val rotateReleaseSignature by tasks.registering(Exec::class) {
+interface Injected { @get:javax.inject.Inject val exec: ExecOperations }
+
+val rotateReleaseSignature by tasks.registering {
     val lineage = signing.getProperty("lineageFile")
     onlyIf { lineage != null && file(lineage).exists() }
-    val apk = layout.buildDirectory.file("outputs/apk/release/app-release.apk")
+    val apkDir = layout.buildDirectory.dir("outputs/apk/release")
     val apksigner = android.sdkDirectory.resolve("build-tools/${android.buildToolsVersion}/apksigner")
-    commandLine(
-        apksigner, "sign",
+    val exec = objects.newInstance<Injected>().exec
+    val args = listOf(
+        apksigner.absolutePath, "sign",
         "--ks", signing.getProperty("legacyStoreFile").orEmpty(),
         "--ks-key-alias", signing.getProperty("legacyKeyAlias").orEmpty(),
         "--ks-pass", "pass:" + signing.getProperty("legacyStorePassword").orEmpty(),
@@ -119,8 +130,12 @@ val rotateReleaseSignature by tasks.registering(Exec::class) {
         "--key-pass", "pass:" + signing.getProperty("keyPassword").orEmpty(),
         "--lineage", lineage.orEmpty(),
         "--rotation-min-sdk-version", "28",
-        apk.get().asFile.absolutePath,
     )
+    doLast {
+        val apks = apkDir.get().asFile.listFiles { f -> f.extension == "apk" }.orEmpty()
+        check(apks.isNotEmpty()) { "No release APKs in ${apkDir.get()}" }
+        apks.forEach { apk -> exec.exec { commandLine(args + apk.absolutePath) } }
+    }
 }
 
 tasks.matching { it.name == "assembleRelease" }.configureEach { finalizedBy(rotateReleaseSignature) }
