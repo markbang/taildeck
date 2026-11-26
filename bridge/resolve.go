@@ -275,3 +275,4 @@ func probePorts(ctx context.Context, overall, perPort time.Duration, ports []int
 	sort.Ints(open)
 	return open
 }
+// hand edit
