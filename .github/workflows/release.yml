@@ -45,7 +45,7 @@ jobs:
         run: |
           v=$(go list -m -f '{{.Version}}' golang.org/x/mobile)
           go install golang.org/x/mobile/cmd/gomobile@$v golang.org/x/mobile/cmd/gobind@$v
-          ./build.sh
+          ../tool/build-bridge.sh
 
       - name: libghostty-vt
         run: ./term/build-ghostty.sh

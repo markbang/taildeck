@@ -33,7 +33,7 @@ Requirements: Go 1.26+, `gomobile`, Zig 0.17, JDK 17+, Android SDK 36, NDK r28, 
 
 ```sh
 go install golang.org/x/mobile/cmd/gomobile@latest
-./bridge/build.sh                      # -> android/app/libs/tsbridge.aar
+./tool/build-bridge.sh                 # -> android/app/libs/tsbridge.aar
 ./term/build-ghostty.sh                # -> android/app/src/main/cpp/ghostty
 cd android && ./gradlew assembleRelease
 ```

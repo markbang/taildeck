@@ -33,7 +33,7 @@ App 内 WebView 以 `127.0.0.1:18680` 网关作为正向代理（Tailnet 地址�
 
 ```sh
 go install golang.org/x/mobile/cmd/gomobile@latest
-./bridge/build.sh                      # 生成 android/app/libs/tsbridge.aar
+./tool/build-bridge.sh                 # 生成 android/app/libs/tsbridge.aar
 ./term/build-ghostty.sh                # 生成 android/app/src/main/cpp/ghostty
 cd android && ./gradlew assembleRelease
 ```
