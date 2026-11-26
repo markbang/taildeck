@@ -38,4 +38,6 @@ go install golang.org/x/mobile/cmd/gomobile@latest
 cd android && ./gradlew assembleRelease
 ```
 
-The release build is signed with the debug key. Change `signingConfig` before distributing it.
+Release APKs are signed with the key in `android/keystore.properties` (template: `android/keystore.properties.example`). Without that file, `assembleRelease` falls back to the debug key, so a local build is not for distribution.
+
+The release workflow (`.github/workflows/release.yml`) needs nine signing secrets and fails if any of them is missing. It signs each APK with the legacy key for v1/v2 and the release key for v3, linked by the lineage file, so existing installs upgrade in place. Without a lineage file, the APK is signed with the release key alone.

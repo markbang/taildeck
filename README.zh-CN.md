@@ -38,4 +38,6 @@ go install golang.org/x/mobile/cmd/gomobile@latest
 cd android && ./gradlew assembleRelease
 ```
 
-Release 包用 debug 密钥签名，正式分发前请修改 `signingConfig`。
+Release 包使用 `android/keystore.properties` 中的密钥签名（模板见 `android/keystore.properties.example`）。没有该文件时，`assembleRelease` 退回 debug 密钥签名，本地构建不能用于分发。
+
+发布流程（`.github/workflows/release.yml`）需要 9 个签名 secret，缺少任何一个都会失败。之后每个 APK 用旧密钥签 v1/v2、用新密钥签 v3，并由 lineage 文件关联，使已安装的版本可以原地升级。没有 lineage 文件时，只用 release 密钥签名。
