@@ -127,18 +127,19 @@ func (h *Herdr) Transcript(target string) (string, error) {
 	if kind == "omp" {
 		kind = "pi"
 	}
-	file, matched := "", ""
-	if a.AgentSession == nil || a.AgentSession.Value == "" {
-		cwd := a.ForegroundCwd
-		if cwd == "" {
-			cwd = a.Cwd
-		}
-		if file = h.identify(target, kind, cwd); file != "" {
-			matched = "session"
-		}
+	cwd := a.ForegroundCwd
+	if cwd == "" {
+		cwd = a.Cwd
 	}
-	if file == "" {
-		file, matched = h.resolveSessionFile(kind, a)
+	file, matched := "", ""
+	if s := h.identify(target, kind, cwd); s.known() {
+		file, matched = s.file, "session"
+	} else {
+		file, matched = h.resolveSessionFile(target, kind, a)
+	}
+	if file == "" && matched != "" {
+		// A new session: its transcript starts empty, never as the last one.
+		return (&transcript{kind: kind}).render("new")
 	}
 	if file != "" {
 		if out, err := h.readTranscript(target, kind, file, matched); err == nil {
@@ -163,7 +164,12 @@ func (h *Herdr) screen(target string) (string, error) {
 	return string(b), err
 }
 
-func (h *Herdr) resolveSessionFile(kind string, a agentRecord) (path, matched string) {
+// resolveSessionFile finds the file of the session herdr names for the pane.
+// matched is "session" with an empty path when that session has written
+// nothing yet. Without a name it takes the newest session in the agent's
+// directory written since the agent started ("cwd"); a session that ended
+// before then belongs to another agent.
+func (h *Herdr) resolveSessionFile(target, kind string, a agentRecord) (path, matched string) {
 	var script string
 	if s := a.AgentSession; s != nil {
 		switch {
@@ -182,10 +188,10 @@ func (h *Herdr) resolveSessionFile(kind string, a agentRecord) (path, matched st
 				if p := strings.TrimSpace(string(out)); p != "" {
 					return strings.Split(p, "\n")[0], "session"
 				}
+				return "", "session"
 			}
 		}
 	}
-	// Without a session reference, take the newest session for the agent's directory.
 	cwd := a.ForegroundCwd
 	if cwd == "" {
 		cwd = a.Cwd
@@ -193,24 +199,105 @@ func (h *Herdr) resolveSessionFile(kind string, a agentRecord) (path, matched st
 	if cwd == "" || !strings.HasPrefix(cwd, "/") {
 		return "", ""
 	}
+	var files string
 	switch kind {
 	case "claude":
 		dir := regexp.MustCompile(`[^A-Za-z0-9]`).ReplaceAllString(cwd, "-")
-		script = fmt.Sprintf(`ls -t "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/%s/*.jsonl 2>/dev/null | head -1`, shellQuote(dir))
+		files = fmt.Sprintf(`"${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/%s/*.jsonl`, shellQuote(dir))
 	case "pi":
 		dir := "--" + strings.NewReplacer("/", "-", ":", "-").Replace(strings.TrimPrefix(cwd, "/")) + "--"
-		script = fmt.Sprintf(`ls -t "$HOME/.pi/agent/sessions"/%s/*.jsonl 2>/dev/null | head -1`, shellQuote(dir))
+		files = fmt.Sprintf(`"$HOME/.pi/agent/sessions"/%s/*.jsonl`, shellQuote(dir))
 	default:
 		return "", ""
 	}
-	out, err := h.exec(script, 10*time.Second)
+	proc, err := h.processInfo(target)
+	if err != nil || len(proc.Foreground) == 0 {
+		return "", ""
+	}
+	var pids []string
+	for _, p := range proc.Foreground {
+		pids = append(pids, fmt.Sprint(p.PID))
+	}
+	out, err := h.exec(fmt.Sprintf(`echo "now $(date +%%s)"
+for p in %s; do e=$(ps -o etime= -p "$p" 2>/dev/null | tr -d ' '); [ -n "$e" ] && echo "etime $e"; done
+ls -t %s 2>/dev/null | head -20 | while IFS= read -r f; do echo "file $(date -r "$f" +%%s) $f"; done`,
+		strings.Join(pids, " "), files), 10*time.Second)
 	if err != nil {
 		return "", ""
 	}
-	if p := strings.TrimSpace(string(out)); p != "" {
-		return strings.Split(p, "\n")[0], "cwd"
+	file, started := newestSince(string(out))
+	switch {
+	case file != "":
+		return file, "cwd"
+	case started:
+		return "", "cwd"
 	}
 	return "", ""
+}
+
+// newestSince reads the cwd lookup's output: the node's clock, how long the
+// pane's processes have run, and session files newest first with their
+// modification times. It returns the newest file written since the oldest
+// process started, and whether that start time was known.
+func newestSince(out string) (file string, started bool) {
+	var now, elapsed int64 = -1, -1
+	type entry struct {
+		at   int64
+		path string
+	}
+	var files []entry
+	for _, line := range strings.Split(out, "\n") {
+		kind, rest, _ := strings.Cut(strings.TrimSpace(line), " ")
+		switch kind {
+		case "now":
+			fmt.Sscan(rest, &now)
+		case "etime":
+			if s, ok := parseEtime(rest); ok && s > elapsed {
+				elapsed = s
+			}
+		case "file":
+			at, path, ok := strings.Cut(rest, " ")
+			var t int64
+			if _, err := fmt.Sscan(at, &t); ok && err == nil && path != "" {
+				files = append(files, entry{t, path})
+			}
+		}
+	}
+	if now < 0 || elapsed < 0 {
+		return "", false
+	}
+	// etime rounds down, so a file written in the start second still counts.
+	start := now - elapsed - 1
+	for _, f := range files {
+		if f.at >= start {
+			return f.path, true
+		}
+	}
+	return "", true
+}
+
+// parseEtime reads ps's elapsed time, [[dd-]hh:]mm:ss, in seconds.
+func parseEtime(s string) (int64, bool) {
+	var days int64
+	if d, rest, ok := strings.Cut(s, "-"); ok {
+		if _, err := fmt.Sscan(d, &days); err != nil {
+			return 0, false
+		}
+		s = rest
+	}
+	var total int64
+	parts := strings.Split(s, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return 0, false
+	}
+	for _, p := range parts {
+		var n int64
+		if _, err := fmt.Sscan(p, &n); err != nil {
+			return 0, false
+		}
+		total = total*60 + n
+	}
+	return days*86400 + total, true
 }
 
 func (h *Herdr) readTranscript(target, kind, file, matched string) (string, error) {

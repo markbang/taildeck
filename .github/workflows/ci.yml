@@ -13,6 +13,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  bridge-source:
+    name: bridge source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: bridge/ matches taildeck-ui native/bridge
+        run: tool/check-bridge.sh
+
   bridge:
     runs-on: ubuntu-latest
     timeout-minutes: 15

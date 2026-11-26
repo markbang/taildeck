@@ -41,3 +41,7 @@ cd android && ./gradlew assembleRelease
 Release 包使用 `android/keystore.properties` 中的密钥签名（模板见 `android/keystore.properties.example`）。没有该文件时，`assembleRelease` 退回 debug 密钥签名，本地构建不能用于分发。
 
 发布流程（`.github/workflows/release.yml`）需要 9 个签名 secret，缺少任何一个都会失败。之后每个 APK 用旧密钥签 v1/v2、用新密钥签 v3，并由 lineage 文件关联，使已安装的版本可以原地升级。没有 lineage 文件时，只用 release 密钥签名。
+
+## Bridge
+
+`bridge/` 是 [taildeck-ui `native/bridge`](https://github.com/markbang/taildeck-ui/tree/main/native/bridge) 的只读副本，版本记录在 `bridge/SOURCE`。要改 bridge，只在 taildeck-ui 里改，然后运行 `tool/sync-bridge.sh <taildeck-ui commit>`（不带参数时用当前 main）。CI 和发布流程会运行 `tool/check-bridge.sh`：固定的 commit 不在 taildeck-ui main 上，或 `bridge/` 与它不一致，就会失败。允许落后于 taildeck-ui，不允许分叉。

@@ -180,9 +180,12 @@ func (e *engine) dialClient(host string, port int, user, password, keyPath, pass
 		return answers, nil
 	}))
 
-	addr := net.JoinHostPort(e.resolveHost(host), fmt.Sprint(port))
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+	addr, err := e.dialTarget(ctx, host, port)
+	if err != nil {
+		return nil, err
+	}
 	raw, err := e.srv.Dial(ctx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", addr, err)
