@@ -70,42 +70,33 @@ func (h *Herdr) Image(ref string) ([]byte, error) {
 
 type paneSession struct {
 	file    string
+	id      string // the agent's own session id; set before its file exists
+	pids    string // the foreground processes the session was found from
 	checked time.Time
 }
 
+// known says the pane's processes named their session. An empty file then
+// means a new session that has written nothing yet.
+func (s paneSession) known() bool { return s.file != "" || s.id != "" }
+
 var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9-]{8,64}$`)
 
-// identify finds the transcript of the agent in a pane from its processes:
+// identify finds the session of the agent in a pane from its processes:
 // Claude Code writes sessions/<pid>.json, Codex keeps its rollout file open.
-// Exact finds are reported back to herdr so every client sees them.
-func (h *Herdr) identify(pane, kind, cwd string) string {
+// It is re-checked when the processes change and every 15 s, since /clear
+// and /new switch sessions inside one process. Finds are reported back to
+// herdr so every client sees them.
+func (h *Herdr) identify(pane, kind, cwd string) paneSession {
 	if kind != "claude" && kind != "codex" {
-		return ""
+		return paneSession{}
 	}
-	h.smu.Lock()
-	if s := h.sessions[pane]; s != nil && (s.file != "" || time.Since(s.checked) < 15*time.Second) {
-		h.smu.Unlock()
-		return s.file
-	}
-	h.sessions[pane] = &paneSession{checked: time.Now()}
-	h.smu.Unlock()
-
-	raw, err := h.Call("pane.process_info", fmt.Sprintf(`{"pane_id":%q}`, pane))
+	proc, err := h.processInfo(pane)
 	if err != nil {
-		return ""
+		return paneSession{}
 	}
-	var info struct {
-		ProcessInfo struct {
-			Foreground []struct {
-				PID  int      `json:"pid"`
-				Argv []string `json:"argv"`
-			} `json:"foreground_processes"`
-		} `json:"process_info"`
-	}
-	json.Unmarshal([]byte(raw), &info)
 	var pids []string
 	resume := ""
-	for _, p := range info.ProcessInfo.Foreground {
+	for _, p := range proc.Foreground {
 		pids = append(pids, fmt.Sprint(p.PID))
 		for i, a := range p.Argv {
 			if (a == "resume" || a == "--resume" || a == "-r") && i+1 < len(p.Argv) && sessionIDPattern.MatchString(p.Argv[i+1]) {
@@ -114,35 +105,45 @@ func (h *Herdr) identify(pane, kind, cwd string) string {
 		}
 	}
 	if len(pids) == 0 {
-		return ""
+		return paneSession{}
 	}
-	file, id := "", ""
+	key := strings.Join(pids, " ")
+	h.smu.Lock()
+	before := h.sessions[pane]
+	if before != nil && before.pids == key && time.Since(before.checked) < 15*time.Second {
+		h.smu.Unlock()
+		return *before
+	}
+	h.smu.Unlock()
+
+	found := paneSession{pids: key, checked: time.Now()}
 	switch kind {
 	case "claude":
-		file, id = h.claudeSession(pids, cwd)
+		found.file, found.id = h.claudeSession(pids, cwd)
 	case "codex":
-		file = h.codexSession(pids, resume)
-	}
-	if file == "" {
-		return ""
+		found.file = h.codexSession(pids, resume)
 	}
 	h.smu.Lock()
-	h.sessions[pane] = &paneSession{file: file, checked: time.Now()}
+	h.sessions[pane] = &found
 	h.smu.Unlock()
+	if !found.known() || before != nil && before.file == found.file && before.id == found.id {
+		return found
+	}
 	report := map[string]any{"pane_id": pane, "source": "herdr:" + kind, "agent": kind, "seq": time.Now().UnixMicro()}
-	if id != "" {
-		report["agent_session_id"] = id
+	if found.id != "" {
+		report["agent_session_id"] = found.id
 	} else {
-		report["agent_session_path"] = file
+		report["agent_session_path"] = found.file
 	}
 	if b, err := json.Marshal(report); err == nil {
 		h.Call("pane.report_agent_session", string(b))
 	}
-	return file
+	return found
 }
 
 // claudeSession reads sessions/<pid>.json for the pane's processes; failing
-// that, it takes the only live session whose directory is the pane's.
+// that, it takes the only live session whose directory is the pane's. The id
+// comes back without a file when the session has no transcript yet.
 func (h *Herdr) claudeSession(pids []string, cwd string) (file, id string) {
 	out, err := h.exec(fmt.Sprintf(`pids=%s
 dirs="${CLAUDE_CONFIG_DIR:-$HOME/.claude}
@@ -209,7 +210,7 @@ done`, shellQuote(strings.Join(pids, " "))), 10*time.Second)
 	if f := strings.TrimSpace(string(out)); f != "" {
 		return strings.Split(f, "\n")[0], pick.id
 	}
-	return "", ""
+	return "", pick.id
 }
 
 // codexSession finds the rollout file a Codex process has open, or the one

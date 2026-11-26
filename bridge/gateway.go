@@ -131,9 +131,16 @@ func startGateway(e *engine, preferredPort int) (*gateway, error) {
 		}
 	}
 	g := &gateway{ln: ln, port: ln.Addr().(*net.TCPAddr).Port, e: e}
+	g.setup(e.dialAny)
+	g.srv = &http.Server{Handler: g, ReadHeaderTimeout: 30 * time.Second}
+	go g.srv.Serve(ln)
+	return g, nil
+}
+
+func (g *gateway) setup(dial func(ctx context.Context, addr string) (net.Conn, error)) {
 	g.transport = &http.Transport{
 		DialContext: func(ctx context.Context, _, addr string) (net.Conn, error) {
-			return e.dialAny(ctx, addr)
+			return dial(ctx, addr)
 		},
 		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
 		ForceAttemptHTTP2:     true,
@@ -154,9 +161,6 @@ func startGateway(e *engine, preferredPort int) (*gateway, error) {
 		FlushInterval: -1,
 		ErrorHandler:  proxyError,
 	}
-	g.srv = &http.Server{Handler: g, ReadHeaderTimeout: 30 * time.Second}
-	go g.srv.Serve(ln)
-	return g, nil
 }
 
 func (g *gateway) close() {

@@ -1,0 +1,5 @@
+# Read-only copy. Change the bridge in taildeck-ui, then run tool/sync-bridge.sh <commit>.
+repo=https://github.com/markbang/taildeck-ui
+path=native/bridge
+commit=04e38c79ea2ae7ae2550d91d75db205384a43a87
+tree=4492d8419b0123bdacb122959d97bb3190e03031

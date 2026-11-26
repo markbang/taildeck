@@ -43,6 +43,10 @@ type Herdr struct {
 
 	done      chan struct{}
 	closeOnce sync.Once
+
+	// Tests answer herdr calls and run node scripts locally through these.
+	callHook func(method, paramsJSON string) (string, error)
+	execHook func(script string) ([]byte, error)
 }
 
 const (
@@ -117,6 +121,9 @@ true`, 10*time.Second)
 // exec runs a POSIX sh script on the node. The script goes over stdin so the
 // user's login shell (bash, zsh, fish, ...) never parses it.
 func (h *Herdr) exec(script string, timeout time.Duration) ([]byte, error) {
+	if h.execHook != nil {
+		return h.execHook(script)
+	}
 	s, err := h.client.NewSession()
 	if err != nil {
 		return nil, err
@@ -178,6 +185,9 @@ func (s *sessionStream) Close() error { return s.s.Close() }
 func (h *Herdr) Call(method, paramsJSON string) (string, error) {
 	if paramsJSON == "" {
 		paramsJSON = "{}"
+	}
+	if h.callHook != nil {
+		return h.callHook(method, paramsJSON)
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()

@@ -33,7 +33,7 @@ Requirements: Go 1.26+, `gomobile`, Zig 0.17, JDK 17+, Android SDK 36, NDK r28, 
 
 ```sh
 go install golang.org/x/mobile/cmd/gomobile@latest
-./bridge/build.sh                      # -> android/app/libs/tsbridge.aar
+./tool/build-bridge.sh                 # -> android/app/libs/tsbridge.aar
 ./term/build-ghostty.sh                # -> android/app/src/main/cpp/ghostty
 cd android && ./gradlew assembleRelease
 ```
@@ -41,3 +41,7 @@ cd android && ./gradlew assembleRelease
 Release APKs are signed with the key in `android/keystore.properties` (template: `android/keystore.properties.example`). Without that file, `assembleRelease` falls back to the debug key, so a local build is not for distribution.
 
 The release workflow (`.github/workflows/release.yml`) needs nine signing secrets and fails if any of them is missing. It signs each APK with the legacy key for v1/v2 and the release key for v3, linked by the lineage file, so existing installs upgrade in place. Without a lineage file, the APK is signed with the release key alone.
+
+## Bridge
+
+`bridge/` is a read-only copy of [taildeck-ui `native/bridge`](https://github.com/markbang/taildeck-ui/tree/main/native/bridge), pinned in `bridge/SOURCE`. To change the bridge, change it in taildeck-ui only, then run `tool/sync-bridge.sh <taildeck-ui commit>` (no argument: current main). CI and the release workflow run `tool/check-bridge.sh`, which fails if the pinned commit is not on taildeck-ui main or `bridge/` differs from it. Lagging behind taildeck-ui is allowed; diverging is not.
